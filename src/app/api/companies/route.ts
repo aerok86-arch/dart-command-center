@@ -30,7 +30,7 @@ export function GET(request: NextRequest) {
     const ql = q.toLowerCase()
 
     const results: Company[] = list
-      .filter(c => c.n.includes(q) || c.e.toLowerCase().includes(ql))
+      .filter(c => c.n.includes(q) || c.e.toLowerCase().includes(ql) || (c.s && c.s.includes(q)))
       .sort((a, b) => {
         const rank = (co: CompactCo) =>
           co.n === q ? 0 : co.n.startsWith(q) ? 1 : 2

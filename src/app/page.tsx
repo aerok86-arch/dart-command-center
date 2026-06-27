@@ -7,7 +7,7 @@ type Company = { corp_code: string; corp_name: string; corp_eng_name: string; st
 type Disclosure = { rcept_no: string; corp_cls: string; corp_name: string; corp_code: string; stock_code: string; report_nm: string; rcept_dt: string; flr_nm: string; rm: string }
 type FinancialResult = { financial_data: string; source_file: string; rcept_no: string } | { error: string }
 type Tab = '공시목록' | '재무추이' | '키워드검색'
-type TrendEntry = { year: string; rcept_no: string; report_nm: string; data: FinancialResult | null; loading: boolean }
+type TrendEntry = { year: string; rcept_no: string; report_nm: string; data: FinancialResult | null; loading: boolean; metrics?: Record<string, string> }
 type Preset = { id: string; label: string; bgn: string; end: string }
 
 // ── Constants ──────────────────────────────────────────────────────────────
@@ -234,10 +234,10 @@ export default function DartCommandCenter() {
           !d.report_nm.includes('반기') &&
           !d.report_nm.includes('분기')
         )
-        // 같은 연도 중복 제거 (사업보고서 우선, 없으면 감사보고서)
+        // 같은 회계연도 중복 제거 (접수연도 기준X → 회계연도 기준으로 수정)
         .reduce((acc: Disclosure[], d: Disclosure) => {
-          const yr = d.rcept_dt.slice(0, 4)
-          if (!acc.find(a => a.rcept_dt.slice(0, 4) === yr)) acc.push(d)
+          const fy = extractFiscalYear(d.report_nm, d.rcept_dt)
+          if (!acc.find(a => extractFiscalYear(a.report_nm, a.rcept_dt) === fy)) acc.push(d)
           return acc
         }, [])
         .slice(0, 4)
@@ -259,7 +259,11 @@ export default function DartCommandCenter() {
       const results = await Promise.all(
         annuals.map(d => fetch(`/api/financial/${d.rcept_no}`).then(r => r.json()).catch(() => ({ error: '네트워크 오류' })))
       )
-      setTrend(entries.map((e, i) => ({ ...e, data: results[i], loading: false })))
+      setTrend(entries.map((e, i) => {
+        const data = results[i] as FinancialResult
+        const metrics = data && 'financial_data' in data ? extractMetrics(data.financial_data) : undefined
+        return { ...e, data, loading: false, metrics }
+      }))
     } catch {
       trendCorpRef.current = null // 실패 시 재시도 허용
       setTrendLoading(false)
@@ -656,8 +660,7 @@ export default function DartCommandCenter() {
                       const values = trend.map(t => {
                         if (t.loading) return '...'
                         if (!t.data || 'error' in t.data) return '-'
-                        const m = extractMetrics(t.data.financial_data)
-                        return m[key] || '-'
+                        return t.metrics?.[key] || '-'
                       })
                       return (
                         <tr key={key} className="border-b border-gray-100 hover:bg-gray-50">
