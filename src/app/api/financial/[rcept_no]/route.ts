@@ -15,7 +15,6 @@ function htmlTableToText(xml: string): string {
   const rows = xml.match(/<TR[^>]*>[\s\S]*?<\/TR>/gi) || []
   const lines: string[] = []
   for (const row of rows) {
-    // TH도 포함 (일부 감사보고서는 계정명을 TH로 마크업)
     const cells = row.match(/<(?:TD|TH)[^>]*>[\s\S]*?<\/(?:TD|TH)>/gi) || []
     const cleaned = cells
       .map(c => c.replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim())
@@ -23,6 +22,23 @@ function htmlTableToText(xml: string): string {
     if (hasContent) lines.push(cleaned.join(' | '))
   }
   return lines.join('\n')
+}
+
+// 재무제표다운 행인지 판별 — 계정명이 일반적 재무 용어로 시작하면 true
+const FINANCIAL_ROW_RE = /^(?:자산|부채|자본|수익|비용|이익|손실|현금|유동|비유동|매출|영업|당기|합계|소계|총계|장기|단기|유형|무형|이자|법인세|포괄손익|영업활동|투자활동|재무활동|전기|당 기|전 기|기초|기말)/
+
+function looksLikeFinancialTable(tbl: string): boolean {
+  const rows = tbl.split('\n').filter(l => l.includes('|'))
+  if (rows.length < 5) return false
+  let matches = 0
+  for (const row of rows) {
+    const cells = row.split('|').map(s => s.trim())
+    // 빈 첫 셀이면 두 번째 셀을 계정명으로 사용
+    const accountCell = (cells[0].length > 0 ? cells[0] : cells[1] || '').replace(/\s/g, '')
+    if (FINANCIAL_ROW_RE.test(accountCell)) matches++
+  }
+  // 전체 행 중 25% 이상이 재무 용어로 시작해야 진짜 재무제표
+  return matches >= 3 && matches / rows.length >= 0.2
 }
 
 const SECTION_MARKERS = [
@@ -34,7 +50,6 @@ const SECTION_MARKERS = [
   '연 결 현 금 흐 름 표', '현 금 흐 름 표',
 ]
 
-// 마커가 더 큰 명칭의 일부인지 확인 (예: '재무상태표' ⊂ '연결재무상태표')
 function isEmbeddedMarker(text: string, idx: number, marker: string): boolean {
   const normMarker = marker.replace(/\s/g, '')
   const prefix = text.slice(Math.max(0, idx - 16), idx).replace(/\s/g, '')
@@ -45,7 +60,6 @@ function isEmbeddedMarker(text: string, idx: number, marker: string): boolean {
   return false
 }
 
-// 다음 섹션 마커의 위치 (주석/다음 섹션 유입 방지용 경계)
 function findNextSectionIdx(text: string, fromIdx: number, currentNormKey: string): number {
   let minIdx = text.length
   for (const m of SECTION_MARKERS) {
@@ -60,7 +74,7 @@ function findNextSectionIdx(text: string, fromIdx: number, currentNormKey: strin
   return minIdx
 }
 
-// 첫 번째 실질 재무 TABLE 추출 (중첩 TABLE 깊이 추적, 소형/무숫자 테이블 스킵)
+// 첫 번째 "진짜 재무제표 테이블"을 반환 — 비재무 테이블(지분증권, PP&E 명세 등) 스킵
 function extractMainTable(html: string): string {
   const TOKEN = /(<TABLE(?:\s[^>]*)?>)|(<\/TABLE\s*>)/gi
   let depth = 0, start = -1
@@ -73,10 +87,8 @@ function extractMainTable(html: string): string {
       depth--
       if (depth === 0 && start >= 0) {
         const tbl = htmlTableToText(html.slice(start, m.index + m[0].length))
-        const rows = tbl.split('\n').filter(l => l.includes('|'))
-        // 5행 이상 + 콤마 숫자 포함 = 실질 재무 테이블
-        if (rows.length >= 5 && /\d{3}(?:,\d{3})+/.test(tbl)) return tbl
-        start = -1  // 조건 미충족 시 다음 TABLE 시도
+        if (looksLikeFinancialTable(tbl)) return tbl
+        start = -1
       }
     }
   }
@@ -96,7 +108,7 @@ function extractSections(text: string, seen: Set<string>): string {
       if (idx === -1) break
       if (isEmbeddedMarker(text, idx, marker)) { idx += marker.length; continue }
 
-      // 현재 마커 ~ 다음 섹션 마커 전까지만 잘라냄 (주석 테이블 유입 방지)
+      // 현재 마커 ~ 다음 섹션 마커 전까지로 탐색 범위 제한
       const nextIdx = findNextSectionIdx(text, idx + marker.length, normKey)
       const limit = Math.min(nextIdx, idx + 80000)
       const chunk = text.slice(idx, limit)
@@ -170,7 +182,7 @@ export async function GET(
       })
     }
 
-    // fallback: 문서 전체 첫 번째 실질 테이블
+    // fallback: 문서 전체에서 재무 테이블 탐색
     for (const fileName of sorted) {
       const fileBuffer = await zip.files[fileName].async('arraybuffer')
       const text = decodeContent(fileBuffer)
