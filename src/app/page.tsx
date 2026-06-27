@@ -345,8 +345,13 @@ export default function DartCommandCenter() {
       {/* ── Sidebar ── */}
       <div className="w-64 border-r border-gray-200 flex flex-col flex-shrink-0">
         <div className="px-4 py-3 border-b border-gray-200">
-          <div className="text-xs font-bold tracking-[0.15em] uppercase">DART CC</div>
-          <div className="text-[10px] text-gray-400 mt-0.5">Command Center</div>
+          <button
+            onClick={() => { setSelected(null); setDisclosures([]); setTrend([]); setActiveTab('공시목록'); setQuery('') }}
+            className="text-left hover:opacity-70 transition-opacity w-full"
+          >
+            <div className="text-xs font-bold tracking-[0.15em] uppercase">DART CC</div>
+            <div className="text-[10px] text-gray-400 mt-0.5">Command Center</div>
+          </button>
         </div>
 
         <div className="px-3 py-2 border-b border-gray-100">
@@ -425,6 +430,17 @@ export default function DartCommandCenter() {
               {tab}
             </button>
           ))}
+          {selected && (
+            <div className="ml-auto flex items-center gap-2 px-4 text-[10px] text-gray-400">
+              <span>›</span>
+              <span className="font-semibold text-black">{selected.corp_name}</span>
+              <button
+                onClick={() => { setSelected(null); setDisclosures([]); setTrend([]) }}
+                className="ml-1 text-gray-300 hover:text-black transition-colors"
+                title="선택 해제"
+              >✕</button>
+            </div>
+          )}
         </div>
 
         {/* ── Tab: 공시목록 ── */}
