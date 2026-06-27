@@ -4,8 +4,7 @@ const DART_API_KEY = process.env.DART_API_KEY
 
 export async function GET(request: NextRequest) {
   const sp = request.nextUrl.searchParams
-  const corp_code = sp.get('corp_code')
-  if (!corp_code) return NextResponse.json({ error: 'corp_code required' }, { status: 400 })
+  const corp_code = sp.get('corp_code') || ''
 
   const bgn_de = sp.get('bgn_de') || ''
   const end_de = sp.get('end_de') || ''
@@ -14,7 +13,7 @@ export async function GET(request: NextRequest) {
 
   const url = new URL('https://opendart.fss.or.kr/api/list.json')
   url.searchParams.set('crtfc_key', DART_API_KEY!)
-  url.searchParams.set('corp_code', corp_code)
+  if (corp_code) url.searchParams.set('corp_code', corp_code)
   if (bgn_de) url.searchParams.set('bgn_de', bgn_de)
   if (end_de) url.searchParams.set('end_de', end_de)
   if (pblntf_ty) url.searchParams.set('pblntf_ty', pblntf_ty)
