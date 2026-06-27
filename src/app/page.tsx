@@ -51,6 +51,11 @@ function fromInputDate(s: string) {
   return s.replace(/-/g, '')
 }
 
+function todayStr() {
+  const d = new Date()
+  return `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`
+}
+
 function defaultBgn() {
   const d = new Date()
   d.setFullYear(d.getFullYear() - 1)
@@ -58,8 +63,40 @@ function defaultBgn() {
 }
 
 function defaultEnd() {
-  const d = new Date()
-  return `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`
+  return todayStr()
+}
+
+type Preset = { id: string; label: string; bgn: string; end: string }
+
+function buildPresets(): Preset[] {
+  const now = new Date()
+  const today = todayStr()
+  const y = now.getFullYear()
+
+  const shiftYear = (n: number) => {
+    const d = new Date(now)
+    d.setFullYear(d.getFullYear() + n)
+    return `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`
+  }
+
+  const recents: Preset[] = [
+    { id: '1y', label: '1Y', bgn: shiftYear(-1), end: today },
+    { id: '2y', label: '2Y', bgn: shiftYear(-2), end: today },
+    { id: '3y', label: '3Y', bgn: shiftYear(-3), end: today },
+    { id: '5y', label: '5Y', bgn: shiftYear(-5), end: today },
+  ]
+
+  const fys: Preset[] = Array.from({ length: 5 }, (_, i) => {
+    const fy = y - i
+    return {
+      id: `fy${fy}`,
+      label: `FY${String(fy).slice(2)}`,
+      bgn: `${fy}0101`,
+      end: fy === y ? today : `${fy}1231`,
+    }
+  })
+
+  return [...recents, ...fys]
 }
 
 export default function DartCommandCenter() {
@@ -68,9 +105,17 @@ export default function DartCommandCenter() {
   const [searchLoading, setSearchLoading] = useState(false)
   const [selected, setSelected] = useState<Company | null>(null)
 
+  const PRESETS = buildPresets()
   const [bgn, setBgn] = useState(defaultBgn)
   const [end, setEnd] = useState(defaultEnd)
+  const [activePreset, setActivePreset] = useState<string | null>(null)
   const [pblntf, setPblntf] = useState('')
+
+  const applyPreset = (p: Preset) => {
+    setBgn(p.bgn)
+    setEnd(p.end)
+    setActivePreset(p.id)
+  }
 
   const [disclosures, setDisclosures] = useState<Disclosure[]>([])
   const [discLoading, setDiscLoading] = useState(false)
@@ -225,18 +270,58 @@ export default function DartCommandCenter() {
 
         {/* Filter bar */}
         <div className="flex items-center gap-3 px-4 py-2 border-b border-gray-200 bg-white flex-shrink-0 flex-wrap">
+          {/* Recent presets */}
+          <div className="flex items-center gap-1">
+            <span className="text-gray-400 mr-0.5">최근</span>
+            {PRESETS.filter(p => p.id.endsWith('y')).map(p => (
+              <button
+                key={p.id}
+                onClick={() => applyPreset(p)}
+                className={`px-2 py-0.5 border transition-colors ${
+                  activePreset === p.id
+                    ? 'bg-black text-white border-black'
+                    : 'border-gray-300 text-gray-500 hover:border-black hover:text-black'
+                }`}
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
+
+          <div className="w-px h-4 bg-gray-200" />
+
+          {/* FY presets */}
+          <div className="flex items-center gap-1">
+            <span className="text-gray-400 mr-0.5">FY</span>
+            {PRESETS.filter(p => p.id.startsWith('fy')).map(p => (
+              <button
+                key={p.id}
+                onClick={() => applyPreset(p)}
+                className={`px-2 py-0.5 border transition-colors ${
+                  activePreset === p.id
+                    ? 'bg-black text-white border-black'
+                    : 'border-gray-300 text-gray-500 hover:border-black hover:text-black'
+                }`}
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
+
+          <div className="w-px h-4 bg-gray-200" />
+
           <span className="text-gray-400">기간</span>
           <input
             type="date"
             value={toInputDate(bgn)}
-            onChange={e => setBgn(fromInputDate(e.target.value))}
+            onChange={e => { setBgn(fromInputDate(e.target.value)); setActivePreset(null) }}
             className="border border-gray-200 px-2 py-1 focus:border-black focus:outline-none bg-white"
           />
           <span className="text-gray-400">~</span>
           <input
             type="date"
             value={toInputDate(end)}
-            onChange={e => setEnd(fromInputDate(e.target.value))}
+            onChange={e => { setEnd(fromInputDate(e.target.value)); setActivePreset(null) }}
             className="border border-gray-200 px-2 py-1 focus:border-black focus:outline-none bg-white"
           />
 
