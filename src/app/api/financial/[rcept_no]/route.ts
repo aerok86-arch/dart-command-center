@@ -24,23 +24,6 @@ function htmlTableToText(xml: string): string {
   return lines.join('\n')
 }
 
-// 재무제표다운 행인지 판별 — 계정명이 일반적 재무 용어로 시작하면 true
-const FINANCIAL_ROW_RE = /^(?:자산|부채|자본|수익|비용|이익|손실|현금|유동|비유동|매출|영업|당기|합계|소계|총계|장기|단기|유형|무형|이자|법인세|포괄손익|영업활동|투자활동|재무활동|전기|당 기|전 기|기초|기말)/
-
-function looksLikeFinancialTable(tbl: string): boolean {
-  const rows = tbl.split('\n').filter(l => l.includes('|'))
-  if (rows.length < 5) return false
-  let matches = 0
-  for (const row of rows) {
-    const cells = row.split('|').map(s => s.trim())
-    // 빈 첫 셀이면 두 번째 셀을 계정명으로 사용
-    const accountCell = (cells[0].length > 0 ? cells[0] : cells[1] || '').replace(/\s/g, '')
-    if (FINANCIAL_ROW_RE.test(accountCell)) matches++
-  }
-  // 전체 행 중 25% 이상이 재무 용어로 시작해야 진짜 재무제표
-  return matches >= 3 && matches / rows.length >= 0.2
-}
-
 const SECTION_MARKERS = [
   '연결재무상태표', '재무상태표', '대차대조표',
   '연결포괄손익계산서', '연결손익계산서', '포괄손익계산서', '손익계산서',
@@ -74,8 +57,28 @@ function findNextSectionIdx(text: string, fromIdx: number, currentNormKey: strin
   return minIdx
 }
 
-// 첫 번째 "진짜 재무제표 테이블"을 반환 — 비재무 테이블(지분증권, PP&E 명세 등) 스킵
-function extractMainTable(html: string): string {
+// 섹션 타입별 검증: 추출된 테이블이 해당 재무제표인지 정밀 확인
+// 단순 text.includes()로 충분 — 재무제표에만 등장하는 핵심 계정명을 찾는다
+function isValidForSection(normKey: string, tbl: string): boolean {
+  if (normKey.includes('재무상태표') || normKey.includes('대차대조표')) {
+    // BS는 반드시 자산총계·부채총계·자본총계 중 하나를 포함
+    return /자산총계|자산합계|부채총계|부채합계|자본총계|자본합계/.test(tbl)
+  }
+  if (normKey.includes('손익계산서') || normKey.includes('포괄손익계산서')) {
+    // IS는 매출액·영업수익·영업이익·당기순이익 중 하나 필수
+    // 주석 rollforward 테이블(기초잔액/이자수익/기말잔액)은 이 항목들이 없으므로 자동 제외
+    return /매출액|영업수익|순영업수익|영업이익|영업손익|당기순이익|당기순손실/.test(tbl)
+  }
+  if (normKey.includes('현금흐름표')) {
+    return /영업활동|투자활동|재무활동/.test(tbl)
+  }
+  // 자본변동표 등 기타 섹션: 5행 이상 + 콤마 숫자 조건만 확인
+  const rows = tbl.split('\n').filter(l => l.includes('|'))
+  return rows.length >= 5 && /\d{3}(?:,\d{3})+/.test(tbl)
+}
+
+// 첫 번째 "해당 섹션다운" TABLE 추출 — 중첩 TABLE 깊이 추적
+function extractMainTable(html: string, normKey: string): string {
   const TOKEN = /(<TABLE(?:\s[^>]*)?>)|(<\/TABLE\s*>)/gi
   let depth = 0, start = -1
   let m: RegExpExecArray | null
@@ -87,7 +90,7 @@ function extractMainTable(html: string): string {
       depth--
       if (depth === 0 && start >= 0) {
         const tbl = htmlTableToText(html.slice(start, m.index + m[0].length))
-        if (looksLikeFinancialTable(tbl)) return tbl
+        if (isValidForSection(normKey, tbl)) return tbl
         start = -1
       }
     }
@@ -108,18 +111,18 @@ function extractSections(text: string, seen: Set<string>): string {
       if (idx === -1) break
       if (isEmbeddedMarker(text, idx, marker)) { idx += marker.length; continue }
 
-      // 현재 마커 ~ 다음 섹션 마커 전까지로 탐색 범위 제한
+      // 현재 마커 ~ 다음 섹션 마커 전까지만 탐색
       const nextIdx = findNextSectionIdx(text, idx + marker.length, normKey)
       const limit = Math.min(nextIdx, idx + 80000)
       const chunk = text.slice(idx, limit)
 
-      const table = extractMainTable(chunk)
+      const table = extractMainTable(chunk, normKey)
       if (table) {
         seen.add(normKey)
         found.push([normKey, table])
         break
       }
-      idx += marker.length
+      idx += marker.length  // 이 occurrence에서 못 찾으면 다음 occurrence 시도
     }
   }
 
@@ -182,14 +185,14 @@ export async function GET(
       })
     }
 
-    // fallback: 문서 전체에서 재무 테이블 탐색
+    // fallback
     for (const fileName of sorted) {
       const fileBuffer = await zip.files[fileName].async('arraybuffer')
       const text = decodeContent(fileBuffer)
-      const table = extractMainTable(text)
-      if (table) {
+      const tbl = htmlTableToText(text)
+      if (/\d{3}(?:,\d{3})+/.test(tbl)) {
         return NextResponse.json({
-          financial_data: `=== 재무제표 (전체 추출) ===\n${table}`,
+          financial_data: `=== 재무제표 (전체 추출) ===\n${tbl}`,
           source_file: fileName,
           rcept_no,
         })

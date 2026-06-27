@@ -99,6 +99,16 @@ function getMetricLines(text: string, key: string): string[] {
   return source.split('\n').filter(l => l.includes('|'))
 }
 
+// "I. 매출액(주석 13)" → "매출액" — 로마숫자 prefix, 순번, 주석 참조 제거
+function normalizeAccountCell(cell: string): string {
+  return cell
+    .replace(/^[IVXLCDMivxlcdm]+\.\s*/, '')  // Roman numeral prefix (I. II. IV. 등)
+    .replace(/^\d+\.\s*/, '')                  // 숫자 prefix (1. 2. 등)
+    .replace(/\(주\s*석\s*\d+\)/g, '')         // (주석 N) 각주 참조
+    .replace(/\(\*+\d*\)/g, '')               // (*1) (*2) 각주 마커
+    .trim()
+}
+
 function extractMetrics(text: string): Record<string, string> {
   const result: Record<string, string> = {}
   const allLines = text.split('\n').filter(l => l.includes('|'))
@@ -112,7 +122,9 @@ function extractMetrics(text: string): Record<string, string> {
       for (const line of lines) {
         const parts = line.split('|').map(s => s.trim())
         // 감사보고서는 첫 셀이 빈 들여쓰기 셀인 경우가 많음 → fallback to parts[1]
-        const accountCell = parts[0].length > 0 ? parts[0] : (parts[1] || '')
+        const rawCell = parts[0].length > 0 ? parts[0] : (parts[1] || '')
+        // "I. 매출액(주석 13)" → "매출액" 으로 정규화 후 regex 매칭
+        const accountCell = normalizeAccountCell(rawCell)
         if (re.test(accountCell)) {
           const normalizedAccount = accountCell.replace(/\s/g, '')
           const exactness = normalizedAccount === key ? 2 : normalizedAccount.includes(key) ? 1 : 0
