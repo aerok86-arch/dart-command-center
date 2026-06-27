@@ -468,6 +468,13 @@ export default function DartCommandCenter() {
             </div>
           </div>
         )}
+
+        <div className="px-3 py-2 border-t border-gray-200 text-[10px] leading-relaxed text-gray-400 bg-white">
+          <div>DART CC made by John Jongyoon Lee</div>
+          <a href="mailto:aerok86@gmail.com" className="hover:text-black underline underline-offset-2">
+            contact: aerok86@gmail.com
+          </a>
+        </div>
       </div>
 
       {/* ── Main ── */}
