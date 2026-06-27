@@ -31,29 +31,45 @@ function htmlTableToText(xml: string): string {
 function extractSections(text: string): string {
   const markers = [
     '재무상태표', '연결재무상태표',
-    '손익계산서', '포괄손익계산서', '연결손익계산서',
+    '손익계산서', '포괄손익계산서', '연결손익계산서', '연결포괄손익계산서',
     '현금흐름표', '연결현금흐름표',
+    // 감사보고서 변형 마커
+    '재 무 상 태 표', '연 결 재 무 상 태 표',
+    '손 익 계 산 서', '포 괄 손 익 계 산 서',
+    '현 금 흐 름 표',
   ]
   const found: [string, string][] = []
   const seen = new Set<string>()
 
   for (const marker of markers) {
+    // 정규화 키 (공백 제거)로 중복 방지
+    const normKey = marker.replace(/\s/g, '')
+    if (seen.has(normKey)) continue
     let idx = 0
     while (true) {
       idx = text.indexOf(marker, idx)
       if (idx === -1) break
-      const chunk = text.slice(Math.max(0, idx - 300), idx + 12000)
+      // 마커 앞뒤로 넓게 탐색 (감사보고서는 테이블이 마커와 멀리 있을 수 있음)
+      const chunk = text.slice(Math.max(0, idx - 500), idx + 40000)
       const table = htmlTableToText(chunk)
-      if (/\d{3}(?:,\d{3})+/.test(table) && !seen.has(marker)) {
-        seen.add(marker)
-        found.push([marker, table])
+      if (/\d{3}(?:,\d{3})+/.test(table)) {
+        seen.add(normKey)
+        found.push([marker.replace(/\s/g, ''), table])
         break
       }
       idx++
     }
   }
 
-  return found.map(([title, text]) => `=== ${title} ===\n${text}`).join('\n\n')
+  if (found.length === 0) {
+    // 마커 탐색 실패 시 문서 전체에서 숫자가 있는 테이블 추출
+    const fullTable = htmlTableToText(text)
+    if (/\d{3}(?:,\d{3})+/.test(fullTable)) {
+      return `=== 재무제표 (전체 추출) ===\n${fullTable}`
+    }
+  }
+
+  return found.map(([title, t]) => `=== ${title} ===\n${t}`).join('\n\n')
 }
 
 export async function GET(

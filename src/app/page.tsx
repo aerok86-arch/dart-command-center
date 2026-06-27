@@ -26,12 +26,12 @@ const PBLNTF_OPTIONS = [
 ]
 
 const TREND_METRICS = [
-  { key: '자산총계', aliases: ['자산총계', '자산합계', '자산 합계'] },
-  { key: '부채총계', aliases: ['부채총계', '부채합계', '부채 합계'] },
-  { key: '자본총계', aliases: ['자본총계', '자본합계', '자본 합계'] },
-  { key: '매출액', aliases: ['매출액', '영업수익', '수익(매출액)', '매출 액'] },
-  { key: '영업이익', aliases: ['영업이익', '영업손실', '영업이익(손실)', '영업손익'] },
-  { key: '당기순이익', aliases: ['당기순이익', '당기순손실', '당기순이익(손실)', '당기순손익'] },
+  { key: '자산총계', aliases: ['자산총계', '자산합계', '자산 합계', '자 산 합 계', '자산  합계', '자  산  합  계'] },
+  { key: '부채총계', aliases: ['부채총계', '부채합계', '부채 합계', '부 채 합 계', '부채  합계'] },
+  { key: '자본총계', aliases: ['자본총계', '자본합계', '자본 합계', '자 본 합 계', '순자산총계'] },
+  { key: '매출액', aliases: ['매출액', '영업수익', '수익(매출액)', '영업수익(매출액)', '매 출 액'] },
+  { key: '영업이익', aliases: ['영업이익', '영업손실', '영업이익(손실)', '영업이익(손익)', '영 업 이 익'] },
+  { key: '당기순이익', aliases: ['당기순이익', '당기순손실', '당기순이익(손실)', '당기순손익', '당 기 순 이 익', '당기순이익(당기순손실)'] },
 ]
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -110,6 +110,7 @@ export default function DartCommandCenter() {
   // ── 재무추이 state
   const [trend, setTrend] = useState<TrendEntry[]>([])
   const [trendLoading, setTrendLoading] = useState(false)
+  const [trendModal, setTrendModal] = useState<TrendEntry | null>(null)
 
   // ── 키워드검색 state
   const [kw, setKw] = useState('')
@@ -574,6 +575,12 @@ export default function DartCommandCenter() {
                         <th key={t.rcept_no} className="px-3 py-2 text-right text-gray-500 font-semibold">
                           <div>{t.year}</div>
                           <div className="text-[10px] font-normal text-gray-400 truncate max-w-[120px]">{t.report_nm}</div>
+                          {!t.loading && t.data && 'financial_data' in t.data && (
+                            <button
+                              onClick={() => setTrendModal(t)}
+                              className="text-[10px] font-normal text-gray-400 hover:text-black underline mt-0.5 block ml-auto"
+                            >전체 보기</button>
+                          )}
                         </th>
                       ))}
                     </tr>
@@ -700,6 +707,34 @@ export default function DartCommandCenter() {
           </>
         )}
       </div>
+
+      {/* ── Trend Full View Modal ── */}
+      {trendModal && trendModal.data && 'financial_data' in trendModal.data && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-8"
+          onClick={e => { if (e.target === e.currentTarget) setTrendModal(null) }}>
+          <div className="bg-white w-full max-w-5xl max-h-[85vh] flex flex-col border border-gray-300 shadow-2xl">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200 flex-shrink-0">
+              <div>
+                <div className="font-bold text-sm">{trendModal.year} · {trendModal.report_nm}</div>
+                <div className="text-gray-400 text-[10px] mt-0.5">
+                  {trendModal.rcept_no} · 소스: {trendModal.data.source_file}
+                </div>
+              </div>
+              <div className="flex gap-2 items-center">
+                <a href={`https://dart.fss.or.kr/dsaf001/main.do?rcpNo=${trendModal.rcept_no}`}
+                  target="_blank" rel="noopener noreferrer"
+                  className="px-2 py-1 border border-gray-300 hover:border-black text-gray-500 hover:text-black transition-colors">DART 원문</a>
+                <button onClick={() => setTrendModal(null)} className="text-gray-400 hover:text-black text-lg px-2">✕</button>
+              </div>
+            </div>
+            <div className="flex-1 overflow-auto p-4">
+              <pre className="text-xs whitespace-pre-wrap leading-relaxed font-mono bg-gray-50 p-4 border border-gray-100">
+                {trendModal.data.financial_data}
+              </pre>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Financial Modal ── */}
       {modal && (
