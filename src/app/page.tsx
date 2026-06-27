@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 
 // ── Types ──────────────────────────────────────────────────────────────────
 type Company = { corp_code: string; corp_name: string; corp_eng_name: string; stock_code: string }
@@ -95,6 +95,15 @@ function extractMetrics(text: string): Record<string, string> {
   return result
 }
 
+// 회계연도 추출: 보고서명의 "(YYYY.MM)" 우선, 없으면 접수연도 (Q1 접수면 전년도)
+function extractFiscalYear(reportNm: string, rceptDt: string): string {
+  const m = reportNm.match(/\((\d{4})\.\d{2}\)/)
+  if (m) return m[1]
+  const y = parseInt(rceptDt.slice(0, 4))
+  const mo = parseInt(rceptDt.slice(4, 6))
+  return mo <= 4 ? String(y - 1) : String(y)
+}
+
 // 전체 재무제표 텍스트 → 섹션별 파싱
 function parseFinancialSections(text: string): { title: string; rows: string[][] }[] {
   const sections: { title: string; rows: string[][] }[] = []
@@ -125,7 +134,7 @@ export default function DartCommandCenter() {
   const [activeTab, setActiveTab] = useState<Tab>('공시목록')
 
   // ── 공시목록 state
-  const PRESETS = buildPresets()
+  const PRESETS = useMemo(() => buildPresets(), [])
   const [bgn, setBgn] = useState(() => offsetYear(-1))
   const [end, setEnd] = useState(todayStr)
   const [activePreset, setActivePreset] = useState<string | null>(null)
@@ -155,6 +164,7 @@ export default function DartCommandCenter() {
   const [finLoading, setFinLoading] = useState(false)
 
   const debounce = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const trendCorpRef = useRef<string | null>(null) // 마지막 로드된 corp_code 추적
 
   // ── localStorage init
   useEffect(() => {
@@ -179,9 +189,9 @@ export default function DartCommandCenter() {
     }, 250)
   }, [query])
 
-  // ── 공시목록 load
+  // ── 공시목록 load (공시목록 탭에서만 실행)
   const loadDisclosures = useCallback(async () => {
-    if (!selected) return
+    if (!selected || activeTab !== '공시목록') return
     setDiscLoading(true)
     setChecked(new Set())
     try {
@@ -195,13 +205,15 @@ export default function DartCommandCenter() {
       const data = await r.json()
       setDisclosures(data.list || [])
     } finally { setDiscLoading(false) }
-  }, [selected, bgn, end, pblntf])
+  }, [selected, bgn, end, pblntf, activeTab])
 
   useEffect(() => { loadDisclosures() }, [loadDisclosures])
 
-  // ── 재무추이 load (when tab activated)
+  // ── 재무추이 load (같은 회사 탭 재진입 시 재호출 방지)
   const loadTrend = useCallback(async () => {
     if (!selected) return
+    if (trendCorpRef.current === selected.corp_code) return // 이미 로드됨
+    trendCorpRef.current = selected.corp_code
     setTrendLoading(true)
     setTrend([])
     try {
@@ -234,7 +246,7 @@ export default function DartCommandCenter() {
       if (!annuals.length) { setTrendLoading(false); return }
 
       const entries: TrendEntry[] = annuals.map(d => ({
-        year: d.rcept_dt.slice(0, 4),
+        year: extractFiscalYear(d.report_nm, d.rcept_dt), // 회계연도 기준
         rcept_no: d.rcept_no,
         report_nm: d.report_nm,
         data: null,
@@ -249,6 +261,7 @@ export default function DartCommandCenter() {
       )
       setTrend(entries.map((e, i) => ({ ...e, data: results[i], loading: false })))
     } catch {
+      trendCorpRef.current = null // 실패 시 재시도 허용
       setTrendLoading(false)
     }
   }, [selected])
@@ -286,6 +299,9 @@ export default function DartCommandCenter() {
 
   // 탭 유지하며 회사 선택 (사이드바 클릭)
   const selectCompany = (co: Company) => {
+    if (co.corp_code !== selected?.corp_code) {
+      trendCorpRef.current = null // 다른 회사 선택 시 캐시 초기화
+    }
     setSelected(co)
     saveRecent(co)
     setExpandedRcept(null)
@@ -321,7 +337,7 @@ export default function DartCommandCenter() {
 
   // ── 키워드 검색
   const doSearch = async () => {
-    setKwLoading(true); setKwSearched(true)
+    setKwLoading(true); setKwSearched(true); setKwResults([])
     try {
       const p = new URLSearchParams({
         bgn_de: kwBgn, end_de: kwEnd,
@@ -477,7 +493,7 @@ export default function DartCommandCenter() {
               <span>›</span>
               <span className="font-semibold text-black">{selected.corp_name}</span>
               <button
-                onClick={() => { setSelected(null); setDisclosures([]); setTrend([]) }}
+                onClick={() => { setSelected(null); setDisclosures([]); setTrend([]); trendCorpRef.current = null }}
                 className="ml-1 text-gray-300 hover:text-black transition-colors"
                 title="선택 해제"
               >✕</button>
