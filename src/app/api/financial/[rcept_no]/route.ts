@@ -19,7 +19,6 @@ function htmlTableToText(xml: string): string {
     const cells = row.match(/<(?:TD|TH)[^>]*>[\s\S]*?<\/(?:TD|TH)>/gi) || []
     const cleaned = cells
       .map(c => c.replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim())
-    // 행 전체가 비어있으면 제외, 개별 셀은 빈 문자열 허용 (컬럼 위치 유지)
     const hasContent = cleaned.some(t => t.length > 0)
     if (hasContent) lines.push(cleaned.join(' | '))
   }
@@ -35,19 +34,55 @@ const SECTION_MARKERS = [
   '연 결 현 금 흐 름 표', '현 금 흐 름 표',
 ]
 
+// 마커가 더 큰 명칭의 일부인지 확인 (예: '재무상태표' ⊂ '연결재무상태표')
 function isEmbeddedMarker(text: string, idx: number, marker: string): boolean {
   const normMarker = marker.replace(/\s/g, '')
   const prefix = text.slice(Math.max(0, idx - 16), idx).replace(/\s/g, '')
-
   if (normMarker === '재무상태표') return prefix.endsWith('연결')
   if (normMarker === '포괄손익계산서') return prefix.endsWith('연결')
   if (normMarker === '손익계산서') return prefix.endsWith('연결') || prefix.endsWith('포괄') || prefix.endsWith('연결포괄')
   if (normMarker === '현금흐름표') return prefix.endsWith('연결')
-
   return false
 }
 
-// seen: 이미 추출된 섹션의 정규화 키 집합 (여러 XML 파일에서 공유)
+// 다음 섹션 마커의 위치 (주석/다음 섹션 유입 방지용 경계)
+function findNextSectionIdx(text: string, fromIdx: number, currentNormKey: string): number {
+  let minIdx = text.length
+  for (const m of SECTION_MARKERS) {
+    const nk = m.replace(/\s/g, '')
+    if (nk === currentNormKey) continue
+    let i = text.indexOf(m, fromIdx)
+    while (i !== -1) {
+      if (!isEmbeddedMarker(text, i, m)) { if (i < minIdx) minIdx = i; break }
+      i = text.indexOf(m, i + 1)
+    }
+  }
+  return minIdx
+}
+
+// 첫 번째 실질 재무 TABLE 추출 (중첩 TABLE 깊이 추적, 소형/무숫자 테이블 스킵)
+function extractMainTable(html: string): string {
+  const TOKEN = /(<TABLE(?:\s[^>]*)?>)|(<\/TABLE\s*>)/gi
+  let depth = 0, start = -1
+  let m: RegExpExecArray | null
+  while ((m = TOKEN.exec(html)) !== null) {
+    if (m[1]) {
+      if (depth === 0) start = m.index
+      depth++
+    } else if (m[2] && depth > 0) {
+      depth--
+      if (depth === 0 && start >= 0) {
+        const tbl = htmlTableToText(html.slice(start, m.index + m[0].length))
+        const rows = tbl.split('\n').filter(l => l.includes('|'))
+        // 5행 이상 + 콤마 숫자 포함 = 실질 재무 테이블
+        if (rows.length >= 5 && /\d{3}(?:,\d{3})+/.test(tbl)) return tbl
+        start = -1  // 조건 미충족 시 다음 TABLE 시도
+      }
+    }
+  }
+  return ''
+}
+
 function extractSections(text: string, seen: Set<string>): string {
   const found: [string, string][] = []
 
@@ -59,19 +94,20 @@ function extractSections(text: string, seen: Set<string>): string {
     while (true) {
       idx = text.indexOf(marker, idx)
       if (idx === -1) break
-      if (isEmbeddedMarker(text, idx, marker)) {
-        idx += marker.length
-        continue
-      }
-      // 마커 이후 80KB 탐색. 앞 구간을 포함하면 직전 표가 섹션에 섞일 수 있다.
-      const chunk = text.slice(idx, idx + 80000)
-      const table = htmlTableToText(chunk)
-      if (/\d{3}(?:,\d{3})+/.test(table)) {
+      if (isEmbeddedMarker(text, idx, marker)) { idx += marker.length; continue }
+
+      // 현재 마커 ~ 다음 섹션 마커 전까지만 잘라냄 (주석 테이블 유입 방지)
+      const nextIdx = findNextSectionIdx(text, idx + marker.length, normKey)
+      const limit = Math.min(nextIdx, idx + 80000)
+      const chunk = text.slice(idx, limit)
+
+      const table = extractMainTable(chunk)
+      if (table) {
         seen.add(normKey)
         found.push([normKey, table])
         break
       }
-      idx++
+      idx += marker.length
     }
   }
 
@@ -102,13 +138,11 @@ export async function GET(
     const zip = await JSZip.loadAsync(buffer)
     const xmlFiles = Object.keys(zip.files).filter(n => n.endsWith('.xml'))
 
-    // 메인 파일(언더스코어 없음) 우선, 그 다음 서브 파일
     const sorted = [
       ...xmlFiles.filter(n => !n.includes('_')),
       ...xmlFiles.filter(n => n.includes('_')),
     ]
 
-    // 여러 XML 파일에서 섹션 누적 (재무상태표/손익계산서가 다른 파일에 있을 수 있음)
     const seen = new Set<string>()
     const allSections: string[] = []
     const sourceFiles: string[] = []
@@ -121,7 +155,6 @@ export async function GET(
         allSections.push(sections)
         sourceFiles.push(fileName)
       }
-      // 핵심 3개 섹션 확보하면 중단
       const hasBS = seen.has('재무상태표') || seen.has('연결재무상태표') || seen.has('대차대조표')
       const hasIS = seen.has('손익계산서') || seen.has('포괄손익계산서') ||
                     seen.has('연결손익계산서') || seen.has('연결포괄손익계산서')
@@ -137,21 +170,21 @@ export async function GET(
       })
     }
 
-    // fallback: 문서 전체 테이블 추출
+    // fallback: 문서 전체 첫 번째 실질 테이블
     for (const fileName of sorted) {
       const fileBuffer = await zip.files[fileName].async('arraybuffer')
       const text = decodeContent(fileBuffer)
-      const fullTable = htmlTableToText(text)
-      if (/\d{3}(?:,\d{3})+/.test(fullTable)) {
+      const table = extractMainTable(text)
+      if (table) {
         return NextResponse.json({
-          financial_data: `=== 재무제표 (전체 추출) ===\n${fullTable}`,
+          financial_data: `=== 재무제표 (전체 추출) ===\n${table}`,
           source_file: fileName,
           rcept_no,
         })
       }
     }
 
-    return NextResponse.json({ error: '재무제표 데이터를 찾을 수 없습니다. XBRL 미제출 법인일 수 있습니다.' })
+    return NextResponse.json({ error: '재무제표 데이터를 찾을 수 없습니다.' })
   } catch (e) {
     console.error('[financial]', e)
     return NextResponse.json({ error: String(e) }, { status: 500 })
