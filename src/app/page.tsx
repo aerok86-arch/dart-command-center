@@ -176,19 +176,30 @@ export default function DartCommandCenter() {
     setTrendLoading(true)
     setTrend([])
     try {
-      // fetch last 5 years of 사업보고서 independent of current filters
+      // 전체 공시에서 연간 재무보고서 탐색 (사업보고서 + 감사보고서 모두 커버)
       const p = new URLSearchParams({
         corp_code: selected.corp_code,
         bgn_de: offsetYear(-6),
         end_de: todayStr(),
-        pblntf_ty: 'A',
-        page_count: '50',
+        page_count: '100',
       })
       const r = await fetch(`/api/disclosures?${p}`)
       const data = await r.json()
-      const annuals: Disclosure[] = (data.list || []).filter(
-        (d: Disclosure) => d.report_nm.includes('사업보고서') && !d.report_nm.includes('기재정정')
-      ).slice(0, 4)
+      const ANNUAL_PATTERNS = ['사업보고서', '감사보고서', '연결감사보고서']
+      const annuals: Disclosure[] = (data.list || [])
+        .filter((d: Disclosure) =>
+          ANNUAL_PATTERNS.some(pat => d.report_nm.includes(pat)) &&
+          !d.report_nm.includes('기재정정') &&
+          !d.report_nm.includes('반기') &&
+          !d.report_nm.includes('분기')
+        )
+        // 같은 연도 중복 제거 (사업보고서 우선, 없으면 감사보고서)
+        .reduce((acc: Disclosure[], d: Disclosure) => {
+          const yr = d.rcept_dt.slice(0, 4)
+          if (!acc.find(a => a.rcept_dt.slice(0, 4) === yr)) acc.push(d)
+          return acc
+        }, [])
+        .slice(0, 4)
 
       if (!annuals.length) { setTrendLoading(false); return }
 
