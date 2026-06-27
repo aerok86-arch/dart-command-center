@@ -26,13 +26,25 @@ function htmlTableToText(xml: string): string {
 }
 
 const SECTION_MARKERS = [
-  '재무상태표', '연결재무상태표',
-  '손익계산서', '포괄손익계산서', '연결손익계산서', '연결포괄손익계산서',
-  '현금흐름표', '연결현금흐름표',
-  '재 무 상 태 표', '연 결 재 무 상 태 표',
-  '손 익 계 산 서', '포 괄 손 익 계 산 서',
-  '현 금 흐 름 표',
+  '연결재무상태표', '재무상태표',
+  '연결포괄손익계산서', '연결손익계산서', '포괄손익계산서', '손익계산서',
+  '연결현금흐름표', '현금흐름표',
+  '연 결 재 무 상 태 표', '재 무 상 태 표',
+  '연 결 포 괄 손 익 계 산 서', '연 결 손 익 계 산 서', '포 괄 손 익 계 산 서', '손 익 계 산 서',
+  '연 결 현 금 흐 름 표', '현 금 흐 름 표',
 ]
+
+function isEmbeddedMarker(text: string, idx: number, marker: string): boolean {
+  const normMarker = marker.replace(/\s/g, '')
+  const prefix = text.slice(Math.max(0, idx - 16), idx).replace(/\s/g, '')
+
+  if (normMarker === '재무상태표') return prefix.endsWith('연결')
+  if (normMarker === '포괄손익계산서') return prefix.endsWith('연결')
+  if (normMarker === '손익계산서') return prefix.endsWith('연결') || prefix.endsWith('포괄') || prefix.endsWith('연결포괄')
+  if (normMarker === '현금흐름표') return prefix.endsWith('연결')
+
+  return false
+}
 
 // seen: 이미 추출된 섹션의 정규화 키 집합 (여러 XML 파일에서 공유)
 function extractSections(text: string, seen: Set<string>): string {
@@ -46,8 +58,12 @@ function extractSections(text: string, seen: Set<string>): string {
     while (true) {
       idx = text.indexOf(marker, idx)
       if (idx === -1) break
-      // 마커 주변 80KB 탐색 (대형 감사보고서는 마커와 표가 멀리 떨어져 있음)
-      const chunk = text.slice(Math.max(0, idx - 1000), idx + 80000)
+      if (isEmbeddedMarker(text, idx, marker)) {
+        idx += marker.length
+        continue
+      }
+      // 마커 이후 80KB 탐색. 앞 구간을 포함하면 직전 표가 섹션에 섞일 수 있다.
+      const chunk = text.slice(idx, idx + 80000)
       const table = htmlTableToText(chunk)
       if (/\d{3}(?:,\d{3})+/.test(table)) {
         seen.add(normKey)
@@ -66,6 +82,10 @@ export async function GET(
   { params }: { params: Promise<{ rcept_no: string }> }
 ) {
   const { rcept_no } = await params
+  if (!DART_API_KEY) {
+    return NextResponse.json({ error: 'DART_API_KEY is not configured' }, { status: 500 })
+  }
+
   const url = `https://opendart.fss.or.kr/api/document.xml?crtfc_key=${DART_API_KEY}&rcept_no=${rcept_no}`
 
   try {
@@ -73,7 +93,7 @@ export async function GET(
     if (!res.ok) return NextResponse.json({ error: 'DART fetch failed' }, { status: 502 })
 
     const buffer = await res.arrayBuffer()
-    const magic = new Uint8Array(buffer, 0, 2)
+    const magic = new Uint8Array(buffer).subarray(0, 2)
     if (magic[0] !== 0x50 || magic[1] !== 0x4b) {
       return NextResponse.json({ error: '유효한 문서가 아닙니다' }, { status: 400 })
     }

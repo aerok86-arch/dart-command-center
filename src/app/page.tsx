@@ -58,11 +58,15 @@ function buildPresets(): Preset[] {
 }
 
 // 숫자 추출: 콤마 포함 3자리 이상 숫자 (천원/원 모두)
-function pickNum(parts: string[]): string | undefined {
-  return parts.slice(1).find(p => {
+function numericCells(parts: string[]): string[] {
+  return parts.slice(1).filter(p => {
     const c = p.replace(/[\s,\(\)△▲]/g, '')
     return /^-?\d{3,}$/.test(c) && c.length > 0
   })
+}
+
+function pickNum(parts: string[]): string | undefined {
+  return numericCells(parts)[0]
 }
 
 // 계정명 셀(첫 번째 셀)에만 매칭 — ^ 앵커로 "자산 및 자본 합계" 오매칭 방지
@@ -77,19 +81,58 @@ const METRIC_PATTERNS: { key: string; re: RegExp }[] = [
   { key: '당기순이익', re: /^당\s*기\s*순\s*(이익|손익|이익\s*\(손실\))/ },
 ]
 
+function getMetricLines(text: string, key: string): string[] {
+  const parts = text.split(/=== (.+?) ===\n?/)
+  const blocks: { title: string; body: string }[] = []
+
+  for (let i = 1; i < parts.length; i += 2) {
+    blocks.push({ title: parts[i].replace(/\s/g, ''), body: parts[i + 1] || '' })
+  }
+
+  const isBalanceMetric = key === '자산총계' || key === '부채총계' || key === '자본총계'
+  const relevant = blocks.filter(({ title }) => {
+    if (isBalanceMetric) return title.includes('재무상태표')
+    return title.includes('손익계산서')
+  })
+
+  const source = relevant.length > 0 ? relevant.map(b => b.body).join('\n') : text
+  return source.split('\n').filter(l => l.includes('|'))
+}
+
 function extractMetrics(text: string): Record<string, string> {
   const result: Record<string, string> = {}
-  // 파이프가 있는 행만 처리 (실제 데이터 행)
-  const lines = text.split('\n').filter(l => l.includes('|'))
+  const allLines = text.split('\n').filter(l => l.includes('|'))
+
   for (const { key, re } of METRIC_PATTERNS) {
-    for (const line of lines) {
-      const parts = line.split('|').map(s => s.trim())
-      // 계정명 셀에만 매칭 (전체 줄 매칭 금지)
-      const accountCell = parts[0]
-      if (re.test(accountCell)) {
-        const val = pickNum(parts)
-        if (val && !result[key]) { result[key] = val; break }
+    const findBest = (lines: string[]) => {
+      let best: string[] | null = null
+      let bestScore = -1
+      let bestExactness = -1
+
+      for (const line of lines) {
+        const parts = line.split('|').map(s => s.trim())
+        // 계정명 셀에만 매칭 (전체 줄 매칭 금지)
+        const accountCell = parts[0]
+        if (re.test(accountCell)) {
+          const normalizedAccount = accountCell.replace(/\s/g, '')
+          const exactness = normalizedAccount === key ? 2 : normalizedAccount.includes(key) ? 1 : 0
+          const score = numericCells(parts).length
+          if (score === 0) continue
+          if (exactness > bestExactness || (exactness === bestExactness && score > bestScore)) {
+            best = parts
+            bestScore = score
+            bestExactness = exactness
+          }
+        }
       }
+
+      return best
+    }
+
+    const best = findBest(getMetricLines(text, key)) || findBest(allLines)
+    if (best) {
+      const val = pickNum(best)
+      if (val) result[key] = val
     }
   }
   return result
@@ -705,13 +748,13 @@ export default function DartCommandCenter() {
                           )
                           return (
                             <div className="divide-y divide-gray-100">
-                              {sections.map(sec => {
+                              {sections.map((sec, secIndex) => {
                                 // 헤더 행 감지: 첫 번째 셀이 비어있고 나머지에 연도/기간 텍스트
                                 const hasHeader = sec.rows[0]?.[0] === '' || /당기|전기|기말|기초|\d{4}/.test(sec.rows[0]?.[1] || '')
                                 const headerRow = hasHeader ? sec.rows[0] : null
                                 const dataRows = hasHeader ? sec.rows.slice(1) : sec.rows
                                 return (
-                                  <div key={sec.title} className="px-4 py-4">
+                                  <div key={`${sec.title}-${secIndex}`} className="px-4 py-4">
                                     <div className="font-bold text-xs mb-3 text-black">{sec.title}</div>
                                     <table className="w-full border-collapse text-xs">
                                       {headerRow && (

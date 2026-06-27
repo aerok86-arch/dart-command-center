@@ -3,6 +3,10 @@ import { NextRequest, NextResponse } from 'next/server'
 const DART_API_KEY = process.env.DART_API_KEY
 
 export async function GET(request: NextRequest) {
+  if (!DART_API_KEY) {
+    return NextResponse.json({ error: 'DART_API_KEY is not configured' }, { status: 500 })
+  }
+
   const sp = request.nextUrl.searchParams
   const corp_code = sp.get('corp_code') || ''
 
@@ -21,6 +25,7 @@ export async function GET(request: NextRequest) {
 
   try {
     const res = await fetch(url.toString())
+    if (!res.ok) return NextResponse.json({ error: 'DART fetch failed' }, { status: 502 })
     const data = await res.json()
     return NextResponse.json(data)
   } catch (e) {
