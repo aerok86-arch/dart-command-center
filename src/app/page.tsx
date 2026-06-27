@@ -90,6 +90,22 @@ function extractMetrics(text: string): Record<string, string> {
   return result
 }
 
+// 전체 재무제표 텍스트 → 섹션별 파싱
+function parseFinancialSections(text: string): { title: string; rows: string[][] }[] {
+  const sections: { title: string; rows: string[][] }[] = []
+  const parts = text.split(/=== (.+?) ===\n?/)
+  for (let i = 1; i < parts.length; i += 2) {
+    const title = parts[i]
+    const body = parts[i + 1] || ''
+    const rows = body.split('\n')
+      .filter(l => l.includes('|'))
+      .map(l => l.split('|').map(s => s.trim()))
+      .filter(r => r.some(c => c.length > 0))
+    if (rows.length > 0) sections.push({ title, rows })
+  }
+  return sections
+}
+
 // ── Component ──────────────────────────────────────────────────────────────
 export default function DartCommandCenter() {
   // ── sidebar state
@@ -262,7 +278,19 @@ export default function DartCommandCenter() {
   }
   const isWatched = (corp_code: string) => watchlist.some(c => c.corp_code === corp_code)
 
-  const selectCompany = (co: Company) => { setSelected(co); saveRecent(co); setActiveTab('공시목록') }
+  // 탭 유지하며 회사 선택 (사이드바 클릭)
+  const selectCompany = (co: Company) => {
+    setSelected(co)
+    saveRecent(co)
+    setExpandedRcept(null)
+  }
+  // 키워드 검색 결과에서 회사 클릭 → 공시목록으로 이동
+  const selectAndGoDisc = (co: Company) => {
+    setSelected(co)
+    saveRecent(co)
+    setExpandedRcept(null)
+    setActiveTab('공시목록')
+  }
 
   // ── download
   const downloadZip = async (rcept_no: string) => {
@@ -633,16 +661,60 @@ export default function DartCommandCenter() {
                           <button onClick={() => setExpandedRcept(null)} className="text-gray-400 hover:text-black">✕</button>
                         </div>
                       </div>
-                      <div className="p-4 overflow-auto max-h-[60vh]">
-                        {entry.loading && <div className="text-gray-400">로딩 중...</div>}
+                      <div className="overflow-auto max-h-[65vh]">
+                        {entry.loading && <div className="px-4 py-6 text-gray-400">로딩 중...</div>}
                         {!entry.loading && entry.data && 'error' in entry.data && (
-                          <div className="text-red-500">{entry.data.error}</div>
+                          <div className="px-4 py-4 text-red-500">{entry.data.error}</div>
                         )}
-                        {!entry.loading && entry.data && 'financial_data' in entry.data && (
-                          <pre className="text-xs whitespace-pre-wrap leading-relaxed font-mono">
-                            {entry.data.financial_data}
-                          </pre>
-                        )}
+                        {!entry.loading && entry.data && 'financial_data' in entry.data && (() => {
+                          const sections = parseFinancialSections(entry.data.financial_data)
+                          if (sections.length === 0) return (
+                            <pre className="p-4 text-xs whitespace-pre-wrap font-mono">{entry.data.financial_data}</pre>
+                          )
+                          return (
+                            <div className="divide-y divide-gray-100">
+                              {sections.map(sec => {
+                                // 헤더 행 감지: 첫 번째 셀이 비어있고 나머지에 연도/기간 텍스트
+                                const hasHeader = sec.rows[0]?.[0] === '' || /당기|전기|기말|기초|\d{4}/.test(sec.rows[0]?.[1] || '')
+                                const headerRow = hasHeader ? sec.rows[0] : null
+                                const dataRows = hasHeader ? sec.rows.slice(1) : sec.rows
+                                return (
+                                  <div key={sec.title} className="px-4 py-4">
+                                    <div className="font-bold text-xs mb-3 text-black">{sec.title}</div>
+                                    <table className="w-full border-collapse text-xs">
+                                      {headerRow && (
+                                        <thead>
+                                          <tr className="border-b border-gray-200">
+                                            {headerRow.map((h, j) => (
+                                              <th key={j} className={`py-1 text-gray-500 font-semibold ${j === 0 ? 'text-left pr-4' : 'text-right px-3'}`}>
+                                                {h}
+                                              </th>
+                                            ))}
+                                          </tr>
+                                        </thead>
+                                      )}
+                                      <tbody>
+                                        {dataRows.map((row, i) => {
+                                          const isTotal = /합\s*계|총\s*계/.test(row[0] || '')
+                                          return (
+                                            <tr key={i} className={`border-b border-gray-50 hover:bg-gray-50 ${isTotal ? 'font-bold border-t border-gray-200' : ''}`}>
+                                              <td className="py-1 pr-4 text-gray-700 w-60 min-w-[160px]">{row[0]}</td>
+                                              {row.slice(1).map((v, j) => (
+                                                <td key={j} className={`py-1 px-3 text-right font-mono tabular-nums ${v === '-' || v === '' ? 'text-gray-300' : 'text-black'}`}>
+                                                  {v || '–'}
+                                                </td>
+                                              ))}
+                                            </tr>
+                                          )
+                                        })}
+                                      </tbody>
+                                    </table>
+                                  </div>
+                                )
+                              })}
+                            </div>
+                          )
+                        })()}
                       </div>
                     </div>
                   )
@@ -724,7 +796,7 @@ export default function DartCommandCenter() {
                       <tr key={d.rcept_no} className="border-b border-gray-100 hover:bg-gray-50">
                         <td className="px-3 py-2 text-gray-500 whitespace-nowrap">{fmtDate(d.rcept_dt)}</td>
                         <td className="px-3 py-2 font-semibold">
-                          <button onClick={() => { selectCompany({ corp_code: d.corp_code, corp_name: d.corp_name, corp_eng_name: '', stock_code: d.stock_code }) }}
+                          <button onClick={() => selectAndGoDisc({ corp_code: d.corp_code, corp_name: d.corp_name, corp_eng_name: '', stock_code: d.stock_code })}
                             className="hover:underline text-left">
                             {d.corp_name}
                           </button>
