@@ -65,23 +65,28 @@ function pickNum(parts: string[]): string | undefined {
   })
 }
 
-// regex 기반 매칭 — 공백 변형 전부 커버
+// 계정명 셀(첫 번째 셀)에만 매칭 — ^ 앵커로 "자산 및 자본 합계" 오매칭 방지
 const METRIC_PATTERNS: { key: string; re: RegExp }[] = [
-  { key: '자산총계', re: /자\s*산\s*(총|합)\s*계/ },
-  { key: '부채총계', re: /부\s*채\s*(총|합)\s*계/ },
-  { key: '자본총계', re: /자\s*본\s*(총|합)\s*계|순\s*자\s*산\s*(총|합)\s*계/ },
-  { key: '매출액',   re: /매\s*출\s*액|영\s*업\s*수\s*익(?!\s*비)/ },
-  { key: '영업이익', re: /영\s*업\s*(이익|손익|이익\(손실\)|손실\(이익\))/ },
-  { key: '당기순이익', re: /당\s*기\s*순\s*(이익|손익|이익\(손실\)|손실\(이익\))/ },
+  // 재무상태표
+  { key: '자산총계', re: /^자\s*산\s*(총|합)\s*계|^부\s*채\s*및\s*자\s*본\s*(총|합)\s*계|^자\s*산\s*합\s*계/ },
+  { key: '부채총계', re: /^부\s*채\s*(총|합)\s*계/ },
+  { key: '자본총계', re: /^자\s*본\s*(총|합)\s*계|^순\s*자\s*산\s*(총|합)\s*계/ },
+  // 손익계산서 — 은행/일반 모두 커버
+  { key: '매출액', re: /^매\s*출\s*액|^영\s*업\s*수\s*익(?!비)|^이\s*자\s*수\s*익\s*(합\s*계)?$|^순\s*영\s*업\s*수\s*익/ },
+  { key: '영업이익', re: /^영\s*업\s*(이익|손익|이익\s*\(손실\))/ },
+  { key: '당기순이익', re: /^당\s*기\s*순\s*(이익|손익|이익\s*\(손실\))/ },
 ]
 
 function extractMetrics(text: string): Record<string, string> {
   const result: Record<string, string> = {}
-  const lines = text.split('\n')
+  // 파이프가 있는 행만 처리 (실제 데이터 행)
+  const lines = text.split('\n').filter(l => l.includes('|'))
   for (const { key, re } of METRIC_PATTERNS) {
     for (const line of lines) {
-      if (re.test(line)) {
-        const parts = line.split('|').map(s => s.trim())
+      const parts = line.split('|').map(s => s.trim())
+      // 계정명 셀에만 매칭 (전체 줄 매칭 금지)
+      const accountCell = parts[0]
+      if (re.test(accountCell)) {
         const val = pickNum(parts)
         if (val && !result[key]) { result[key] = val; break }
       }
@@ -224,6 +229,7 @@ export default function DartCommandCenter() {
           return acc
         }, [])
         .slice(0, 4)
+        .reverse()  // 오래된 연도 → 최신 연도 (왼→오)
 
       if (!annuals.length) { setTrendLoading(false); return }
 
