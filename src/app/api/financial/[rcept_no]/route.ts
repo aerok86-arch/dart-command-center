@@ -15,7 +15,8 @@ function htmlTableToText(xml: string): string {
   const rows = xml.match(/<TR[^>]*>[\s\S]*?<\/TR>/gi) || []
   const lines: string[] = []
   for (const row of rows) {
-    const cells = row.match(/<TD[^>]*>[\s\S]*?<\/TD>/gi) || []
+    // TH도 포함 (일부 감사보고서는 계정명을 TH로 마크업)
+    const cells = row.match(/<(?:TD|TH)[^>]*>[\s\S]*?<\/(?:TD|TH)>/gi) || []
     const cleaned = cells
       .map(c => c.replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim())
     // 행 전체가 비어있으면 제외, 개별 셀은 빈 문자열 허용 (컬럼 위치 유지)
@@ -26,10 +27,10 @@ function htmlTableToText(xml: string): string {
 }
 
 const SECTION_MARKERS = [
-  '연결재무상태표', '재무상태표',
+  '연결재무상태표', '재무상태표', '대차대조표',
   '연결포괄손익계산서', '연결손익계산서', '포괄손익계산서', '손익계산서',
   '연결현금흐름표', '현금흐름표',
-  '연 결 재 무 상 태 표', '재 무 상 태 표',
+  '연 결 재 무 상 태 표', '재 무 상 태 표', '대 차 대 조 표',
   '연 결 포 괄 손 익 계 산 서', '연 결 손 익 계 산 서', '포 괄 손 익 계 산 서', '손 익 계 산 서',
   '연 결 현 금 흐 름 표', '현 금 흐 름 표',
 ]
@@ -121,7 +122,7 @@ export async function GET(
         sourceFiles.push(fileName)
       }
       // 핵심 3개 섹션 확보하면 중단
-      const hasBS = seen.has('재무상태표') || seen.has('연결재무상태표')
+      const hasBS = seen.has('재무상태표') || seen.has('연결재무상태표') || seen.has('대차대조표')
       const hasIS = seen.has('손익계산서') || seen.has('포괄손익계산서') ||
                     seen.has('연결손익계산서') || seen.has('연결포괄손익계산서')
       const hasCF = seen.has('현금흐름표') || seen.has('연결현금흐름표')

@@ -91,7 +91,7 @@ function getMetricLines(text: string, key: string): string[] {
 
   const isBalanceMetric = key === '자산총계' || key === '부채총계' || key === '자본총계'
   const relevant = blocks.filter(({ title }) => {
-    if (isBalanceMetric) return title.includes('재무상태표')
+    if (isBalanceMetric) return title.includes('재무상태표') || title.includes('대차대조표')
     return title.includes('손익계산서')
   })
 
@@ -111,8 +111,8 @@ function extractMetrics(text: string): Record<string, string> {
 
       for (const line of lines) {
         const parts = line.split('|').map(s => s.trim())
-        // 계정명 셀에만 매칭 (전체 줄 매칭 금지)
-        const accountCell = parts[0]
+        // 감사보고서는 첫 셀이 빈 들여쓰기 셀인 경우가 많음 → fallback to parts[1]
+        const accountCell = parts[0].length > 0 ? parts[0] : (parts[1] || '')
         if (re.test(accountCell)) {
           const normalizedAccount = accountCell.replace(/\s/g, '')
           const exactness = normalizedAccount === key ? 2 : normalizedAccount.includes(key) ? 1 : 0
