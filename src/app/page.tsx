@@ -25,14 +25,6 @@ const PBLNTF_OPTIONS = [
   { value: 'I', label: '거래소공시' },
 ]
 
-const TREND_METRICS = [
-  { key: '자산총계', aliases: ['자산총계', '자산합계', '자산 합계', '자 산 합 계', '자산  합계', '자  산  합  계'] },
-  { key: '부채총계', aliases: ['부채총계', '부채합계', '부채 합계', '부 채 합 계', '부채  합계'] },
-  { key: '자본총계', aliases: ['자본총계', '자본합계', '자본 합계', '자 본 합 계', '순자산총계'] },
-  { key: '매출액', aliases: ['매출액', '영업수익', '수익(매출액)', '영업수익(매출액)', '매 출 액'] },
-  { key: '영업이익', aliases: ['영업이익', '영업손실', '영업이익(손실)', '영업이익(손익)', '영 업 이 익'] },
-  { key: '당기순이익', aliases: ['당기순이익', '당기순손실', '당기순이익(손실)', '당기순손익', '당 기 순 이 익', '당기순이익(당기순손실)'] },
-]
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 const fmtDate = (s: string) => `${s.slice(0, 4)}.${s.slice(4, 6)}.${s.slice(6)}`
@@ -65,18 +57,33 @@ function buildPresets(): Preset[] {
   ]
 }
 
+// 숫자 추출: 콤마 포함 3자리 이상 숫자 (천원/원 모두)
+function pickNum(parts: string[]): string | undefined {
+  return parts.slice(1).find(p => {
+    const c = p.replace(/[\s,\(\)△▲]/g, '')
+    return /^-?\d{3,}$/.test(c) && c.length > 0
+  })
+}
+
+// regex 기반 매칭 — 공백 변형 전부 커버
+const METRIC_PATTERNS: { key: string; re: RegExp }[] = [
+  { key: '자산총계', re: /자\s*산\s*(총|합)\s*계/ },
+  { key: '부채총계', re: /부\s*채\s*(총|합)\s*계/ },
+  { key: '자본총계', re: /자\s*본\s*(총|합)\s*계|순\s*자\s*산\s*(총|합)\s*계/ },
+  { key: '매출액',   re: /매\s*출\s*액|영\s*업\s*수\s*익(?!\s*비)/ },
+  { key: '영업이익', re: /영\s*업\s*(이익|손익|이익\(손실\)|손실\(이익\))/ },
+  { key: '당기순이익', re: /당\s*기\s*순\s*(이익|손익|이익\(손실\)|손실\(이익\))/ },
+]
+
 function extractMetrics(text: string): Record<string, string> {
   const result: Record<string, string> = {}
   const lines = text.split('\n')
-  for (const metric of TREND_METRICS) {
+  for (const { key, re } of METRIC_PATTERNS) {
     for (const line of lines) {
-      if (metric.aliases.some(a => line.includes(a))) {
+      if (re.test(line)) {
         const parts = line.split('|').map(s => s.trim())
-        const val = parts.slice(1).find(p => {
-          const clean = p.replace(/[\s,\(\)]/g, '')
-          return /^-?\d{4,}$/.test(clean)
-        })
-        if (val && !result[metric.key]) { result[metric.key] = val; break }
+        const val = pickNum(parts)
+        if (val && !result[key]) { result[key] = val; break }
       }
     }
   }
@@ -110,7 +117,7 @@ export default function DartCommandCenter() {
   // ── 재무추이 state
   const [trend, setTrend] = useState<TrendEntry[]>([])
   const [trendLoading, setTrendLoading] = useState(false)
-  const [trendModal, setTrendModal] = useState<TrendEntry | null>(null)
+  const [expandedRcept, setExpandedRcept] = useState<string | null>(null)
 
   // ── 키워드검색 state
   const [kw, setKw] = useState('')
@@ -557,47 +564,51 @@ export default function DartCommandCenter() {
             {!selected ? (
               <div className="flex items-center justify-center h-full text-gray-300">왼쪽에서 회사를 선택하세요</div>
             ) : trendLoading ? (
-              <div className="flex items-center justify-center h-full text-gray-400">사업보고서 조회 중...</div>
+              <div className="flex items-center justify-center h-full text-gray-400">연간 보고서 조회 중...</div>
             ) : trend.length === 0 ? (
-              <div className="flex items-center justify-center h-full text-gray-400">사업보고서를 찾을 수 없습니다</div>
+              <div className="flex items-center justify-center h-full text-gray-400">연간 보고서를 찾을 수 없습니다</div>
             ) : (
               <>
-                <div className="text-[10px] text-gray-400 mb-4">
-                  {selected.corp_name} · 연간 사업보고서 기준 (단위: 천원)
+                <div className="text-[10px] text-gray-400 mb-3">
+                  {selected.corp_name} · 연간보고서 기준 · 단위는 보고서 원본 따름
                 </div>
 
-                {/* Key metrics comparison table */}
-                <table className="w-full border-collapse mb-6">
+                {/* Summary metrics table */}
+                <table className="w-full border-collapse mb-4">
                   <thead>
                     <tr className="bg-gray-50 border-b-2 border-gray-200">
                       <th className="px-3 py-2 text-left text-gray-500 font-semibold w-32">항목</th>
                       {trend.map(t => (
-                        <th key={t.rcept_no} className="px-3 py-2 text-right text-gray-500 font-semibold">
+                        <th key={t.rcept_no} className="px-3 py-2 text-right text-gray-500 font-semibold min-w-[140px]">
                           <div>{t.year}</div>
-                          <div className="text-[10px] font-normal text-gray-400 truncate max-w-[120px]">{t.report_nm}</div>
-                          {!t.loading && t.data && 'financial_data' in t.data && (
-                            <button
-                              onClick={() => setTrendModal(t)}
-                              className="text-[10px] font-normal text-gray-400 hover:text-black underline mt-0.5 block ml-auto"
-                            >전체 보기</button>
-                          )}
+                          <div className="text-[10px] font-normal text-gray-400">{t.report_nm}</div>
+                          <button
+                            onClick={() => setExpandedRcept(expandedRcept === t.rcept_no ? null : t.rcept_no)}
+                            className={`text-[10px] font-normal underline mt-0.5 block ml-auto transition-colors ${
+                              expandedRcept === t.rcept_no ? 'text-black' : 'text-gray-300 hover:text-black'
+                            }`}
+                          >
+                            {expandedRcept === t.rcept_no ? '▲ 접기' : '▼ 전체 보기'}
+                          </button>
                         </th>
                       ))}
                     </tr>
                   </thead>
                   <tbody>
-                    {TREND_METRICS.map(metric => {
+                    {METRIC_PATTERNS.map(({ key }) => {
                       const values = trend.map(t => {
                         if (t.loading) return '...'
                         if (!t.data || 'error' in t.data) return '-'
                         const m = extractMetrics(t.data.financial_data)
-                        return m[metric.key] || '-'
+                        return m[key] || '-'
                       })
                       return (
-                        <tr key={metric.key} className="border-b border-gray-100 hover:bg-gray-50">
-                          <td className="px-3 py-2 text-gray-600 font-medium">{metric.key}</td>
+                        <tr key={key} className="border-b border-gray-100 hover:bg-gray-50">
+                          <td className="px-3 py-2 text-gray-600 font-medium">{key}</td>
                           {values.map((v, i) => (
-                            <td key={i} className={`px-3 py-2 text-right font-mono ${v === '-' ? 'text-gray-300' : 'text-black'}`}>
+                            <td key={i} className={`px-3 py-2 text-right font-mono tabular-nums ${
+                              v === '-' || v === '...' ? 'text-gray-300' : 'text-black'
+                            }`}>
                               {v}
                             </td>
                           ))}
@@ -607,16 +618,46 @@ export default function DartCommandCenter() {
                   </tbody>
                 </table>
 
-                {/* Errors / detail links */}
-                <div className="flex gap-3 flex-wrap">
+                {/* Inline full-text expansion */}
+                {expandedRcept && (() => {
+                  const entry = trend.find(t => t.rcept_no === expandedRcept)
+                  if (!entry) return null
+                  return (
+                    <div className="border border-gray-200 mb-4">
+                      <div className="flex items-center justify-between px-4 py-2 bg-gray-50 border-b border-gray-200">
+                        <span className="font-semibold text-sm">{entry.year} · {entry.report_nm} — 전체 재무제표</span>
+                        <div className="flex gap-3 items-center">
+                          <a href={`https://dart.fss.or.kr/dsaf001/main.do?rcpNo=${entry.rcept_no}`}
+                            target="_blank" rel="noopener noreferrer"
+                            className="text-[10px] text-gray-400 hover:text-black underline">DART 원문</a>
+                          <button onClick={() => setExpandedRcept(null)} className="text-gray-400 hover:text-black">✕</button>
+                        </div>
+                      </div>
+                      <div className="p-4 overflow-auto max-h-[60vh]">
+                        {entry.loading && <div className="text-gray-400">로딩 중...</div>}
+                        {!entry.loading && entry.data && 'error' in entry.data && (
+                          <div className="text-red-500">{entry.data.error}</div>
+                        )}
+                        {!entry.loading && entry.data && 'financial_data' in entry.data && (
+                          <pre className="text-xs whitespace-pre-wrap leading-relaxed font-mono">
+                            {entry.data.financial_data}
+                          </pre>
+                        )}
+                      </div>
+                    </div>
+                  )
+                })()}
+
+                {/* Footer links */}
+                <div className="flex gap-4 flex-wrap text-[10px] text-gray-400">
                   {trend.map(t => (
-                    <div key={t.rcept_no} className="text-[10px] text-gray-400">
+                    <span key={t.rcept_no}>
                       {t.year}
                       {t.data && 'error' in t.data && <span className="text-red-400 ml-1">({t.data.error})</span>}
                       {' · '}
-                      <a href={`https://dart.fss.or.kr/dsaf001/main.do?rcpNo=${t.rcept_no}`} target="_blank" rel="noopener noreferrer"
-                        className="underline hover:text-black">원문</a>
-                    </div>
+                      <a href={`https://dart.fss.or.kr/dsaf001/main.do?rcpNo=${t.rcept_no}`}
+                        target="_blank" rel="noopener noreferrer" className="underline hover:text-black">원문</a>
+                    </span>
                   ))}
                 </div>
               </>
@@ -707,34 +748,6 @@ export default function DartCommandCenter() {
           </>
         )}
       </div>
-
-      {/* ── Trend Full View Modal ── */}
-      {trendModal && trendModal.data && 'financial_data' in trendModal.data && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-8"
-          onClick={e => { if (e.target === e.currentTarget) setTrendModal(null) }}>
-          <div className="bg-white w-full max-w-5xl max-h-[85vh] flex flex-col border border-gray-300 shadow-2xl">
-            <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200 flex-shrink-0">
-              <div>
-                <div className="font-bold text-sm">{trendModal.year} · {trendModal.report_nm}</div>
-                <div className="text-gray-400 text-[10px] mt-0.5">
-                  {trendModal.rcept_no} · 소스: {trendModal.data.source_file}
-                </div>
-              </div>
-              <div className="flex gap-2 items-center">
-                <a href={`https://dart.fss.or.kr/dsaf001/main.do?rcpNo=${trendModal.rcept_no}`}
-                  target="_blank" rel="noopener noreferrer"
-                  className="px-2 py-1 border border-gray-300 hover:border-black text-gray-500 hover:text-black transition-colors">DART 원문</a>
-                <button onClick={() => setTrendModal(null)} className="text-gray-400 hover:text-black text-lg px-2">✕</button>
-              </div>
-            </div>
-            <div className="flex-1 overflow-auto p-4">
-              <pre className="text-xs whitespace-pre-wrap leading-relaxed font-mono bg-gray-50 p-4 border border-gray-100">
-                {trendModal.data.financial_data}
-              </pre>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* ── Financial Modal ── */}
       {modal && (
