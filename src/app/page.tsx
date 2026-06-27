@@ -104,6 +104,31 @@ export default function DartCommandCenter() {
   const [companies, setCompanies] = useState<Company[]>([])
   const [searchLoading, setSearchLoading] = useState(false)
   const [selected, setSelected] = useState<Company | null>(null)
+  const [recents, setRecents] = useState<Company[]>([])
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('dart-cc-recents')
+      if (saved) setRecents(JSON.parse(saved))
+    } catch {}
+  }, [])
+
+  const saveRecent = (co: Company) => {
+    setRecents(prev => {
+      const next = [co, ...prev.filter(c => c.corp_code !== co.corp_code)].slice(0, 8)
+      try { localStorage.setItem('dart-cc-recents', JSON.stringify(next)) } catch {}
+      return next
+    })
+  }
+
+  const removeRecent = (corp_code: string, e: React.MouseEvent) => {
+    e.stopPropagation()
+    setRecents(prev => {
+      const next = prev.filter(c => c.corp_code !== corp_code)
+      try { localStorage.setItem('dart-cc-recents', JSON.stringify(next)) } catch {}
+      return next
+    })
+  }
 
   const PRESETS = buildPresets()
   const [bgn, setBgn] = useState(defaultBgn)
@@ -229,27 +254,60 @@ export default function DartCommandCenter() {
         <div className="flex-1 overflow-y-auto">
           {searchLoading && <div className="px-3 py-2 text-gray-400">검색 중...</div>}
 
-          {!searchLoading && companies.map(co => (
+          {/* Search results */}
+          {!searchLoading && query && companies.map(co => (
             <button
               key={co.corp_code}
-              onClick={() => setSelected(co)}
+              onClick={() => { setSelected(co); saveRecent(co) }}
               className={`w-full text-left px-3 py-2 border-b border-gray-100 transition-colors ${
-                selected?.corp_code === co.corp_code
-                  ? 'bg-black text-white'
-                  : 'hover:bg-gray-50'
+                selected?.corp_code === co.corp_code ? 'bg-black text-white' : 'hover:bg-gray-50'
               }`}
             >
               <div className="font-semibold truncate">{co.corp_name}</div>
-              <div className={`text-[10px] mt-0.5 ${selected?.corp_code === co.corp_code ? 'text-gray-400' : 'text-gray-400'}`}>
+              <div className="text-[10px] mt-0.5 text-gray-400">
                 {co.stock_code ? `${co.stock_code} · 상장` : '비상장'} · {co.corp_code}
               </div>
             </button>
           ))}
 
-          {!searchLoading && companies.length === 0 && query && (
+          {!searchLoading && query && companies.length === 0 && (
             <div className="px-3 py-2 text-gray-400">결과 없음</div>
           )}
-          {!query && (
+
+          {/* Recent history (shown when search box is empty) */}
+          {!query && recents.length > 0 && (
+            <>
+              <div className="px-3 py-1.5 text-[10px] text-gray-400 font-semibold tracking-wider uppercase border-b border-gray-100">
+                최근 검색
+              </div>
+              {recents.map(co => (
+                <button
+                  key={co.corp_code}
+                  onClick={() => { setSelected(co); saveRecent(co) }}
+                  className={`w-full text-left px-3 py-2 border-b border-gray-100 transition-colors group ${
+                    selected?.corp_code === co.corp_code ? 'bg-black text-white' : 'hover:bg-gray-50'
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="font-semibold truncate">{co.corp_name}</div>
+                    <span
+                      onClick={e => removeRecent(co.corp_code, e)}
+                      className={`ml-1 flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity px-1 rounded hover:text-black ${
+                        selected?.corp_code === co.corp_code ? 'text-gray-400' : 'text-gray-300'
+                      }`}
+                    >
+                      ✕
+                    </span>
+                  </div>
+                  <div className="text-[10px] mt-0.5 text-gray-400">
+                    {co.stock_code ? `${co.stock_code} · 상장` : '비상장'} · {co.corp_code}
+                  </div>
+                </button>
+              ))}
+            </>
+          )}
+
+          {!query && recents.length === 0 && (
             <div className="px-3 py-2 text-gray-300">회사명을 입력하세요</div>
           )}
         </div>
