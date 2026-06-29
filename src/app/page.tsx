@@ -7,7 +7,7 @@ type Company = { corp_code: string; corp_name: string; corp_eng_name: string; st
 type Disclosure = { rcept_no: string; corp_cls: string; corp_name: string; corp_code: string; stock_code: string; report_nm: string; rcept_dt: string; flr_nm: string; rm: string }
 type FinancialResult = { financial_data: string; source_file: string; rcept_no: string } | { error: string }
 type Tab = '공시목록' | '재무추이' | '키워드검색'
-type TrendEntry = { year: string; rcept_no: string; report_nm: string; data: FinancialResult | null; loading: boolean; metrics?: Record<string, string> }
+type TrendEntry = { year: string; rcept_no: string; report_nm: string; data: FinancialResult | null; loading: boolean; metrics?: Record<string, string>; metricSources?: Record<string, string> }
 type Preset = { id: string; label: string; bgn: string; end: string }
 
 // ── Constants ──────────────────────────────────────────────────────────────
@@ -73,17 +73,26 @@ function pickNum(parts: string[]): string | undefined {
   return numericCells(parts)[0]
 }
 
-// 계정명 셀(첫 번째 셀)에만 매칭 — ^ 앵커로 "자산 및 자본 합계" 오매칭 방지
-const METRIC_PATTERNS: { key: string; re: RegExp }[] = [
-  // 재무상태표
-  { key: '자산총계', re: /^자\s*산\s*(총|합)\s*계|^부\s*채\s*및\s*자\s*본\s*(총|합)\s*계|^자\s*산\s*합\s*계/ },
-  { key: '부채총계', re: /^부\s*채\s*(총|합)\s*계/ },
-  { key: '자본총계', re: /^자\s*본\s*(총|합)\s*계|^순\s*자\s*산\s*(총|합)\s*계/ },
-  // 손익계산서 — 은행/일반 모두 커버
-  { key: '매출액', re: /^매\s*출\s*액|^영\s*업\s*수\s*익(?!비)|^이\s*자\s*수\s*익\s*(합\s*계)?$|^순\s*영\s*업\s*수\s*익/ },
-  { key: '영업이익', re: /^영\s*업\s*(이익|손익|이익\s*\(손실\))/ },
-  { key: '당기순이익', re: /^(?:연\s*결\s*)?당\s*기\s*순\s*(이익|손익|손실|이익\s*\(손실\))/ },
+// 재무상태표 / 손익계산서 그룹으로 분리
+const METRIC_GROUPS: { label: string; items: { key: string; re: RegExp }[] }[] = [
+  {
+    label: '재무상태표',
+    items: [
+      { key: '자산총계', re: /^자\s*산\s*(총|합)\s*계|^부\s*채\s*및\s*자\s*본\s*(총|합)\s*계|^자\s*산\s*합\s*계/ },
+      { key: '부채총계', re: /^부\s*채\s*(총|합)\s*계/ },
+      { key: '자본총계', re: /^자\s*본\s*(총|합)\s*계|^순\s*자\s*산\s*(총|합)\s*계/ },
+    ],
+  },
+  {
+    label: '손익계산서',
+    items: [
+      { key: '매출액', re: /^매\s*출\s*액|^영\s*업\s*수\s*익(?!비)|^이\s*자\s*수\s*익\s*(합\s*계)?$|^순\s*영\s*업\s*수\s*익/ },
+      { key: '영업이익', re: /^영\s*업\s*(이익|손익|이익\s*\(손실\))/ },
+      { key: '당기순이익', re: /^(?:연\s*결\s*)?당\s*기\s*순\s*(이익|손익|손실|이익\s*\(손실\))/ },
+    ],
+  },
 ]
+const METRIC_PATTERNS = METRIC_GROUPS.flatMap(g => g.items)
 
 function getMetricLines(text: string, key: string): string[] {
   const parts = text.split(/=== (.+?) ===\n?/)
@@ -115,21 +124,19 @@ function normalizeAccountCell(cell: string): string {
     .trim()
 }
 
-function extractMetrics(text: string): Record<string, string> {
-  const result: Record<string, string> = {}
+function extractMetrics(text: string): { metrics: Record<string, string>; sources: Record<string, string> } {
+  const metrics: Record<string, string> = {}
+  const sources: Record<string, string> = {}
   const allLines = text.split('\n').filter(l => l.includes('|'))
 
   for (const { key, re } of METRIC_PATTERNS) {
-    const findBest = (lines: string[]) => {
-      let best: string[] | null = null
+    const findBest = (lines: string[]): { parts: string[]; line: string } | null => {
+      let best: { parts: string[]; line: string } | null = null
       let bestScore = -1
       let bestExactness = -1
 
       for (const line of lines) {
         const parts = line.split('|').map(s => s.trim())
-        // "I." → normalize 후 "" → parts[1] fallback
-        // "I. 매출액(주석 13)" → "매출액" (single cell)
-        // "" | "매출액" → parts[1] fallback (빈 첫 셀)
         const norm0 = normalizeAccountCell(parts[0])
         const norm1 = normalizeAccountCell(parts[1] || '')
         const accountCell = norm0.length > 0 ? norm0 : norm1
@@ -139,23 +146,25 @@ function extractMetrics(text: string): Record<string, string> {
           const score = numericCells(parts).length
           if (score === 0) continue
           if (exactness > bestExactness || (exactness === bestExactness && score > bestScore)) {
-            best = parts
+            best = { parts, line }
             bestScore = score
             bestExactness = exactness
           }
         }
       }
-
       return best
     }
 
-    const best = findBest(getMetricLines(text, key)) || findBest(allLines)
-    if (best) {
-      const val = pickNum(best)
-      if (val) result[key] = val
+    const result = findBest(getMetricLines(text, key)) || findBest(allLines)
+    if (result) {
+      const val = pickNum(result.parts)
+      if (val) {
+        metrics[key] = val
+        sources[key] = result.line.trim()
+      }
     }
   }
-  return result
+  return { metrics, sources }
 }
 
 // 회계연도 추출: 보고서명의 "(YYYY.MM)" 우선, 없으면 접수연도 (Q1 접수면 전년도)
@@ -315,8 +324,8 @@ export default function DartCommandCenter() {
       )
       setTrend(entries.map((e, i) => {
         const data = results[i] as FinancialResult
-        const metrics = data && 'financial_data' in data ? extractMetrics(data.financial_data) : undefined
-        return { ...e, data, loading: false, metrics }
+        const extracted = data && 'financial_data' in data ? extractMetrics(data.financial_data) : undefined
+        return { ...e, data, loading: false, metrics: extracted?.metrics, metricSources: extracted?.sources }
       }))
     } catch {
       trendCorpRef.current = null // 실패 시 재시도 허용
@@ -669,25 +678,40 @@ export default function DartCommandCenter() {
                     </tr>
                   </thead>
                   <tbody>
-                    {METRIC_PATTERNS.map(({ key }) => {
-                      const values = trend.map(t => {
-                        if (t.loading) return '...'
-                        if (!t.data || 'error' in t.data) return '-'
-                        return t.metrics?.[key] || '-'
-                      })
-                      return (
-                        <tr key={key} className="border-b border-gray-100 hover:bg-gray-50">
-                          <td className="px-3 py-2 text-gray-600 font-medium">{key}</td>
-                          {values.map((v, i) => (
-                            <td key={i} className={`px-3 py-2 text-right font-mono tabular-nums ${
-                              v === '-' || v === '...' ? 'text-gray-300' : 'text-black'
-                            }`}>
-                              {v}
-                            </td>
-                          ))}
+                    {METRIC_GROUPS.map(({ label, items }) => (
+                      <>
+                        {/* 섹션 구분 헤더 */}
+                        <tr key={`hdr-${label}`} className="border-b border-gray-200 bg-gray-50">
+                          <td colSpan={trend.length + 1} className="px-3 py-1 text-[9px] font-semibold tracking-widest uppercase text-gray-400">
+                            {label}
+                          </td>
                         </tr>
-                      )
-                    })}
+                        {items.map(({ key }) => {
+                          const values = trend.map(t => {
+                            if (t.loading) return { v: '...', src: '' }
+                            if (!t.data || 'error' in t.data) return { v: '-', src: '' }
+                            return { v: t.metrics?.[key] || '-', src: t.metricSources?.[key] || '' }
+                          })
+                          return (
+                            <tr key={key} className="border-b border-gray-100 hover:bg-gray-50">
+                              <td className="px-3 py-2 text-gray-600 font-medium">{key}</td>
+                              {values.map(({ v, src }, i) => (
+                                <td
+                                  key={i}
+                                  title={src ? `원문: ${src}` : undefined}
+                                  className={`px-3 py-2 text-right font-mono tabular-nums ${
+                                    v === '-' || v === '...' ? 'text-gray-300' : 'text-black'
+                                  } ${src ? 'cursor-help' : ''}`}
+                                >
+                                  {v}
+                                  {src && v !== '-' && <span className="text-[8px] text-gray-300 ml-0.5 align-super">✓</span>}
+                                </td>
+                              ))}
+                            </tr>
+                          )
+                        })}
+                      </>
+                    ))}
                   </tbody>
                 </table>
 
