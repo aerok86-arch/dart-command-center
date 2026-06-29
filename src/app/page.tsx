@@ -122,10 +122,12 @@ function extractMetrics(text: string): Record<string, string> {
 
       for (const line of lines) {
         const parts = line.split('|').map(s => s.trim())
-        // 감사보고서는 첫 셀이 빈 들여쓰기 셀인 경우가 많음 → fallback to parts[1]
-        const rawCell = parts[0].length > 0 ? parts[0] : (parts[1] || '')
-        // "I. 매출액(주석 13)" → "매출액" 으로 정규화 후 regex 매칭
-        const accountCell = normalizeAccountCell(rawCell)
+        // "I." → normalize 후 "" → parts[1] fallback
+        // "I. 매출액(주석 13)" → "매출액" (single cell)
+        // "" | "매출액" → parts[1] fallback (빈 첫 셀)
+        const norm0 = normalizeAccountCell(parts[0])
+        const norm1 = normalizeAccountCell(parts[1] || '')
+        const accountCell = norm0.length > 0 ? norm0 : norm1
         if (re.test(accountCell)) {
           const normalizedAccount = accountCell.replace(/\s/g, '')
           const exactness = normalizedAccount === key ? 2 : normalizedAccount.includes(key) ? 1 : 0

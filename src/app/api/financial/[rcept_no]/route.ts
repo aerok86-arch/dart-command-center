@@ -58,21 +58,19 @@ function findNextSectionIdx(text: string, fromIdx: number, currentNormKey: strin
 }
 
 // 섹션 타입별 검증: 추출된 테이블이 해당 재무제표인지 정밀 확인
-// 단순 text.includes()로 충분 — 재무제표에만 등장하는 핵심 계정명을 찾는다
+// 공백 제거 후 검색: "자 산 총 계" → "자산총계" 로 통일
 function isValidForSection(normKey: string, tbl: string): boolean {
+  const c = tbl.replace(/\s/g, '')  // 공백 제거로 "자 산 총 계" = "자산총계" 처리
   if (normKey.includes('재무상태표') || normKey.includes('대차대조표')) {
-    // BS는 반드시 자산총계·부채총계·자본총계 중 하나를 포함
-    return /자산총계|자산합계|부채총계|부채합계|자본총계|자본합계/.test(tbl)
+    return /자산총계|자산합계|부채총계|부채합계|자본총계|자본합계/.test(c)
   }
   if (normKey.includes('손익계산서') || normKey.includes('포괄손익계산서')) {
-    // IS는 매출액·영업수익·영업이익·당기순이익 중 하나 필수
-    // 주석 rollforward 테이블(기초잔액/이자수익/기말잔액)은 이 항목들이 없으므로 자동 제외
-    return /매출액|영업수익|순영업수익|영업이익|영업손익|당기순이익|당기순손실/.test(tbl)
+    // 주석 rollforward(기초잔액/이자수익/기말잔액)는 이 항목이 없으므로 자동 제외
+    return /매출액|영업수익|순영업수익|영업이익|영업손익|당기순이익|당기순손실/.test(c)
   }
   if (normKey.includes('현금흐름표')) {
-    return /영업활동|투자활동|재무활동/.test(tbl)
+    return /영업활동|투자활동|재무활동/.test(c)
   }
-  // 자본변동표 등 기타 섹션: 5행 이상 + 콤마 숫자 조건만 확인
   const rows = tbl.split('\n').filter(l => l.includes('|'))
   return rows.length >= 5 && /\d{3}(?:,\d{3})+/.test(tbl)
 }
