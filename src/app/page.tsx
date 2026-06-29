@@ -79,7 +79,7 @@ const METRIC_PATTERNS: { key: string; re: RegExp }[] = [
   // 손익계산서 — 은행/일반 모두 커버
   { key: '매출액', re: /^매\s*출\s*액|^영\s*업\s*수\s*익(?!비)|^이\s*자\s*수\s*익\s*(합\s*계)?$|^순\s*영\s*업\s*수\s*익/ },
   { key: '영업이익', re: /^영\s*업\s*(이익|손익|이익\s*\(손실\))/ },
-  { key: '당기순이익', re: /^당\s*기\s*순\s*(이익|손익|이익\s*\(손실\))/ },
+  { key: '당기순이익', re: /^(?:연\s*결\s*)?당\s*기\s*순\s*(이익|손익|손실|이익\s*\(손실\))/ },
 ]
 
 function getMetricLines(text: string, key: string): string[] {
