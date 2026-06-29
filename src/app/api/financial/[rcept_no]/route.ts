@@ -65,8 +65,8 @@ function isValidForSection(normKey: string, tbl: string): boolean {
     return /자산총계|자산합계|부채총계|부채합계|자본총계|자본합계/.test(c)
   }
   if (normKey.includes('손익계산서') || normKey.includes('포괄손익계산서')) {
-    // 주석 rollforward(기초잔액/이자수익/기말잔액)는 이 항목이 없으므로 자동 제외
-    return /매출액|영업수익|순영업수익|영업이익|영업손익|당기순이익|당기순손실/.test(c)
+    // 이익잉여금처분계산서도 당기순이익을 포함하므로 제외 — 매출액·영업이익처럼 IS 고유 항목 필요
+    return /매출액|영업수익|순영업수익|이자수익합계|영업이익|영업손익|영업손실/.test(c)
   }
   if (normKey.includes('현금흐름표')) {
     return /영업활동|투자활동|재무활동/.test(c)

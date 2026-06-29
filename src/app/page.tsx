@@ -630,8 +630,13 @@ export default function DartCommandCenter() {
               <div className="flex items-center justify-center h-full text-gray-400">연간 보고서를 찾을 수 없습니다</div>
             ) : (
               <>
-                <div className="text-[10px] text-gray-400 mb-3">
-                  {selected.corp_name} · 연간보고서 기준 · 단위는 보고서 원본 따름
+                <div className="text-[10px] text-gray-400 mb-3 flex items-center gap-2">
+                  <span>{selected.corp_name} · 연간보고서 기준 · 단위는 보고서 원본 따름</span>
+                  <button
+                    onClick={() => { trendCorpRef.current = null; loadTrend() }}
+                    className="text-gray-300 hover:text-black transition-colors"
+                    title="재무데이터 새로고침"
+                  >↺</button>
                 </div>
 
                 {/* Summary metrics table */}
