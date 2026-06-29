@@ -15,7 +15,8 @@ function htmlTableToText(xml: string): string {
   const rows = xml.match(/<TR[^>]*>[\s\S]*?<\/TR>/gi) || []
   const lines: string[] = []
   for (const row of rows) {
-    const cells = row.match(/<(?:TD|TH)[^>]*>[\s\S]*?<\/(?:TD|TH)>/gi) || []
+    // DART 감사보고서 XML은 데이터 셀에 <TE> 태그 사용 (비표준) — TD/TH/TE 모두 처리
+    const cells = row.match(/<(?:TD|TH|TE)[^>]*>[\s\S]*?<\/(?:TD|TH|TE)>/gi) || []
     const cleaned = cells
       .map(c => c.replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim())
     const hasContent = cleaned.some(t => t.length > 0)
@@ -24,107 +25,47 @@ function htmlTableToText(xml: string): string {
   return lines.join('\n')
 }
 
-const SECTION_MARKERS = [
-  '연결재무상태표', '재무상태표', '대차대조표',
-  '연결포괄손익계산서', '연결손익계산서', '포괄손익계산서', '손익계산서',
-  '연결현금흐름표', '현금흐름표',
-  '연 결 재 무 상 태 표', '재 무 상 태 표', '대 차 대 조 표',
-  '연 결 포 괄 손 익 계 산 서', '연 결 손 익 계 산 서', '포 괄 손 익 계 산 서', '손 익 계 산 서',
-  '연 결 현 금 흐 름 표', '현 금 흐 름 표',
-]
+type FoundTables = { bs?: string; is?: string; cf?: string }
 
-function isEmbeddedMarker(text: string, idx: number, marker: string): boolean {
-  const normMarker = marker.replace(/\s/g, '')
-  const prefix = text.slice(Math.max(0, idx - 16), idx).replace(/\s/g, '')
-  if (normMarker === '재무상태표') return prefix.endsWith('연결')
-  if (normMarker === '포괄손익계산서') return prefix.endsWith('연결')
-  if (normMarker === '손익계산서') return prefix.endsWith('연결') || prefix.endsWith('포괄') || prefix.endsWith('연결포괄')
-  if (normMarker === '현금흐름표') return prefix.endsWith('연결')
-  return false
-}
+// 문서 전체 TABLE을 스캔해 재무상태표/손익계산서/현금흐름표를 타입별로 첫 발견 수집
+// DART 비상장 감사보고서는 TOC에만 섹션 마커가 있고 실제 테이블 앞에는 마커가 없음
+// → 마커 기반 섹션 분리 대신 테이블 타입별 분류 사용
+function scanFinancialTables(text: string): FoundTables {
+  const found: FoundTables = {}
 
-function findNextSectionIdx(text: string, fromIdx: number, currentNormKey: string): number {
-  let minIdx = text.length
-  for (const m of SECTION_MARKERS) {
-    const nk = m.replace(/\s/g, '')
-    if (nk === currentNormKey) continue
-    let i = text.indexOf(m, fromIdx)
-    while (i !== -1) {
-      if (!isEmbeddedMarker(text, i, m)) { if (i < minIdx) minIdx = i; break }
-      i = text.indexOf(m, i + 1)
-    }
-  }
-  return minIdx
-}
-
-// 섹션 타입별 검증: 추출된 테이블이 해당 재무제표인지 정밀 확인
-// 공백 제거 후 검색: "자 산 총 계" → "자산총계" 로 통일
-function isValidForSection(normKey: string, tbl: string): boolean {
-  const c = tbl.replace(/\s/g, '')  // 공백 제거로 "자 산 총 계" = "자산총계" 처리
-  if (normKey.includes('재무상태표') || normKey.includes('대차대조표')) {
-    return /자산총계|자산합계|부채총계|부채합계|자본총계|자본합계/.test(c)
-  }
-  if (normKey.includes('손익계산서') || normKey.includes('포괄손익계산서')) {
-    // 이익잉여금처분계산서도 당기순이익을 포함하므로 제외 — 매출액·영업이익처럼 IS 고유 항목 필요
-    return /매출액|영업수익|순영업수익|이자수익합계|영업이익|영업손익|영업손실/.test(c)
-  }
-  if (normKey.includes('현금흐름표')) {
-    return /영업활동|투자활동|재무활동/.test(c)
-  }
-  const rows = tbl.split('\n').filter(l => l.includes('|'))
-  return rows.length >= 5 && /\d{3}(?:,\d{3})+/.test(tbl)
-}
-
-// 첫 번째 "해당 섹션다운" TABLE 추출 — 중첩 TABLE 깊이 추적
-function extractMainTable(html: string, normKey: string): string {
   const TOKEN = /(<TABLE(?:\s[^>]*)?>)|(<\/TABLE\s*>)/gi
   let depth = 0, start = -1
   let m: RegExpExecArray | null
-  while ((m = TOKEN.exec(html)) !== null) {
+  while ((m = TOKEN.exec(text)) !== null) {
     if (m[1]) {
       if (depth === 0) start = m.index
       depth++
     } else if (m[2] && depth > 0) {
       depth--
       if (depth === 0 && start >= 0) {
-        const tbl = htmlTableToText(html.slice(start, m.index + m[0].length))
-        if (isValidForSection(normKey, tbl)) return tbl
+        const tbl = htmlTableToText(text.slice(start, m.index + m[0].length))
+        const c = tbl.replace(/\s/g, '')  // 공백 제거로 "자 산 총 계" = "자산총계" 처리
+
+        // BS: 자산총계·부채총계·자본총계 중 하나
+        if (!found.bs && /자산총계|자산합계|부채총계|부채합계|자본총계|자본합계/.test(c)) {
+          found.bs = tbl
+        }
+        // IS: 매출액·영업이익 등 IS 고유 계정 (이익잉여금처분계산서의 당기순이익은 제외)
+        if (!found.is && /매출액|영업수익|순영업수익|이자수익합계|영업이익|영업손익|영업손실/.test(c)) {
+          found.is = tbl
+        }
+        // CF: 영업/투자/재무활동
+        if (!found.cf && /영업활동|투자활동|재무활동/.test(c)) {
+          found.cf = tbl
+        }
+
         start = -1
+        if (found.bs && found.is && found.cf) break
       }
     }
   }
-  return ''
-}
 
-function extractSections(text: string, seen: Set<string>): string {
-  const found: [string, string][] = []
-
-  for (const marker of SECTION_MARKERS) {
-    const normKey = marker.replace(/\s/g, '')
-    if (seen.has(normKey)) continue
-
-    let idx = 0
-    while (true) {
-      idx = text.indexOf(marker, idx)
-      if (idx === -1) break
-      if (isEmbeddedMarker(text, idx, marker)) { idx += marker.length; continue }
-
-      // 현재 마커 ~ 다음 섹션 마커 전까지만 탐색
-      const nextIdx = findNextSectionIdx(text, idx + marker.length, normKey)
-      const limit = Math.min(nextIdx, idx + 80000)
-      const chunk = text.slice(idx, limit)
-
-      const table = extractMainTable(chunk, normKey)
-      if (table) {
-        seen.add(normKey)
-        found.push([normKey, table])
-        break
-      }
-      idx += marker.length  // 이 occurrence에서 못 찾으면 다음 occurrence 시도
-    }
-  }
-
-  return found.map(([title, t]) => `=== ${title} ===\n${t}`).join('\n\n')
+  return found
 }
 
 export async function GET(
@@ -156,34 +97,44 @@ export async function GET(
       ...xmlFiles.filter(n => n.includes('_')),
     ]
 
-    const seen = new Set<string>()
-    const allSections: string[] = []
+    const global: FoundTables = {}
     const sourceFiles: string[] = []
+    let isConsolidated = false
 
     for (const fileName of sorted) {
       const fileBuffer = await zip.files[fileName].async('arraybuffer')
       const text = decodeContent(fileBuffer)
-      const sections = extractSections(text, seen)
-      if (sections) {
-        allSections.push(sections)
-        sourceFiles.push(fileName)
+
+      // 연결 여부 감지
+      if (!isConsolidated && (text.includes('연결재무상태표') || text.includes('연결손익계산서'))) {
+        isConsolidated = true
       }
-      const hasBS = seen.has('재무상태표') || seen.has('연결재무상태표') || seen.has('대차대조표')
-      const hasIS = seen.has('손익계산서') || seen.has('포괄손익계산서') ||
-                    seen.has('연결손익계산서') || seen.has('연결포괄손익계산서')
-      const hasCF = seen.has('현금흐름표') || seen.has('연결현금흐름표')
-      if (hasBS && hasIS && hasCF) break
+
+      const found = scanFinancialTables(text)
+      let contributed = false
+      if (!global.bs && found.bs) { global.bs = found.bs; contributed = true }
+      if (!global.is && found.is) { global.is = found.is; contributed = true }
+      if (!global.cf && found.cf) { global.cf = found.cf; contributed = true }
+      if (contributed) sourceFiles.push(fileName)
+
+      if (global.bs && global.is && global.cf) break
     }
 
-    if (allSections.length > 0) {
+    const sections: string[] = []
+    const pfx = isConsolidated ? '연결' : ''
+    if (global.bs) sections.push(`=== ${pfx}재무상태표 ===\n${global.bs}`)
+    if (global.is) sections.push(`=== ${pfx}손익계산서 ===\n${global.is}`)
+    if (global.cf) sections.push(`=== ${pfx}현금흐름표 ===\n${global.cf}`)
+
+    if (sections.length > 0) {
       return NextResponse.json({
-        financial_data: allSections.join('\n\n'),
+        financial_data: sections.join('\n\n'),
         source_file: sourceFiles.join(', '),
         rcept_no,
       })
     }
 
-    // fallback
+    // fallback: 숫자 콤마가 있는 파일이면 전체 텍스트 추출
     for (const fileName of sorted) {
       const fileBuffer = await zip.files[fileName].async('arraybuffer')
       const text = decodeContent(fileBuffer)
