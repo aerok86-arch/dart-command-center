@@ -58,11 +58,14 @@ function buildPresets(): Preset[] {
   ]
 }
 
-// 숫자 추출: 콤마 포함 3자리 이상 숫자 (천원/원 모두)
+// 숫자 추출: 천단위 콤마 패턴(54,308,074,788)만 허용
+// 주석 참조(7,10,30)는 3자리 그룹이 아니므로 제외
 function numericCells(parts: string[]): string[] {
   return parts.slice(1).filter(p => {
-    const c = p.replace(/[\s,\(\)△▲]/g, '')
-    return /^-?\d{3,}$/.test(c) && c.length > 0
+    const t = p.replace(/[\s\(\)△▲]/g, '') // 괄호·공백만 제거, 콤마 유지
+    if (t.includes(','))
+      return /^-?\d{1,3}(,\d{3})+$/.test(t)  // 3자리 천단위 그룹 강제
+    return /^-?\d{4,}$/.test(t)               // 콤마 없으면 4자리 이상
   })
 }
 
