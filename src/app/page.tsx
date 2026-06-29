@@ -100,13 +100,15 @@ function getMetricLines(text: string, key: string): string[] {
   return source.split('\n').filter(l => l.includes('|'))
 }
 
-// "I. 매출액(주석 13)" → "매출액" — 로마숫자 prefix, 순번, 주석 참조 제거
+// "I. 매출액(주석 13)" / "Ⅰ. 매출액(주석14)" → "매출액" — 로마숫자 prefix·주석 제거
+// DART 감사보고서별로 ASCII(I V X)와 Unicode(Ⅰ Ⅴ Ⅹ U+2160-2188) 혼용
 function normalizeAccountCell(cell: string): string {
   return cell
-    .replace(/^[IVXLCDMivxlcdm]+\.\s*/, '')  // Roman numeral prefix (I. II. IV. 등)
-    .replace(/^\d+\.\s*/, '')                  // 숫자 prefix (1. 2. 등)
-    .replace(/\(주\s*석\s*\d+\)/g, '')         // (주석 N) 각주 참조
-    .replace(/\(\*+\d*\)/g, '')               // (*1) (*2) 각주 마커
+    .replace(/^[Ⅰ-ↈIVXLCDMivxlcdm]+\.\s*/, '')  // ASCII+Unicode 로마 숫자 prefix
+    .replace(/^\(\d+\)\s*/, '')               // (1) (2) 순번 prefix
+    .replace(/^\d+\.\s*/, '')                 // 1. 2. 숫자 prefix
+    .replace(/\(주\s*석\s*[\d,]+\)/g, '')     // (주석 N) / (주석 N,M) 각주 참조
+    .replace(/\(\*+\d*\)/g, '')              // (*1) (*2) 각주 마커
     .trim()
 }
 
